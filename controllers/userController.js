@@ -1,39 +1,54 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { pool } from "../config/db.js";
+import { initUserAchievements } from "../models/AchievementModel.js";
 
 // 🔹 Реєстрація користувача
 export const registerUser = async (req, res) => {
     try {
-        const { name, email, password } = req.body;
+        const { first_name, last_name, email, password } = req.body;
 
-        const existing = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
-        if (existing.rows.length > 0) {
-            return res.status(400).json({ success: false, message: "Email already exists" });
+        if (!first_name || !last_name || !email || !password) {
+            return res.status(400).json({
+                success: false,
+                message: "Будь ласка, заповніть усі поля (імʼя, прізвище, email, пароль)",
+            });
         }
 
+        // 🔸 перевірка існуючого користувача
+        const existing = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+        if (existing.rows.length > 0) {
+            return res.status(400).json({ success: false, message: "Email вже використовується" });
+        }
+
+        // 🔸 хешування паролю
         const hashed = await bcrypt.hash(password, 10);
 
-        // 🔸 за замовчуванням роль "user"
+        // 🔸 створення нового користувача
         const result = await pool.query(
-            `INSERT INTO users (name, email, password, role, created_at)
-       VALUES ($1, $2, $3, 'user', NOW())
-       RETURNING id, name, email, role, created_at`,
-            [name, email, hashed]
+            `INSERT INTO users (first_name, last_name, email, password, role, created_at)
+             VALUES ($1, $2, $3, $4, 'user', NOW())
+                 RETURNING id, first_name, last_name, email, role, created_at`,
+            [first_name, last_name, email, hashed]
         );
 
-        // 🔸 створюємо токен із роллю
+        const user = result.rows[0];
+
+        // 🔹 Ініціалізація досягнень (щоб новому користувачу створилися всі 15)
+        await initUserAchievements(user.id);
+
+        // 🔹 Створюємо JWT токен
         const token = jwt.sign(
-            { id: result.rows[0].id, role: result.rows[0].role },
+            { id: user.id, role: user.role, first_name: user.first_name, last_name: user.last_name },
             process.env.JWT_SECRET,
             { expiresIn: "7d" }
         );
 
         res.json({
             success: true,
-            message: "Registration successful",
+            message: "Реєстрація успішна ✅",
             token,
-            user: result.rows[0],
+            user,
         });
     } catch (err) {
         console.error("❌ registerUser error:", err);
@@ -45,33 +60,33 @@ export const registerUser = async (req, res) => {
 export const loginUser = async (req, res) => {
     try {
         const { email, password } = req.body;
-        const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
 
+        const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
         if (result.rows.length === 0) {
-            return res.status(400).json({ success: false, message: "User not found" });
+            return res.status(400).json({ success: false, message: "Користувача не знайдено" });
         }
 
         const user = result.rows[0];
         const isValid = await bcrypt.compare(password, user.password);
 
         if (!isValid) {
-            return res.status(401).json({ success: false, message: "Invalid password" });
+            return res.status(401).json({ success: false, message: "Невірний пароль" });
         }
 
-        // 🔸 токен з роллю
         const token = jwt.sign(
-            { id: user.id, role: user.role },
+            { id: user.id, role: user.role, first_name: user.first_name, last_name: user.last_name },
             process.env.JWT_SECRET,
             { expiresIn: "7d" }
         );
 
         res.json({
             success: true,
-            message: "Login successful",
+            message: "Вхід успішний ✅",
             token,
             user: {
                 id: user.id,
-                name: user.name,
+                first_name: user.first_name,
+                last_name: user.last_name,
                 email: user.email,
                 role: user.role,
                 created_at: user.created_at,
@@ -87,16 +102,19 @@ export const loginUser = async (req, res) => {
 export const getCurrentUser = async (req, res) => {
     try {
         const token = req.headers.authorization?.split(" ")[1];
-        if (!token) return res.status(401).json({ success: false, message: "No token provided" });
+        if (!token)
+            return res.status(401).json({ success: false, message: "Немає токена авторизації" });
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
         const userRes = await pool.query(
-            "SELECT id, name, email, role, created_at FROM users WHERE id = $1",
+            `SELECT id, first_name, last_name, email, role, created_at
+             FROM users WHERE id = $1`,
             [decoded.id]
         );
 
         if (userRes.rows.length === 0)
-            return res.status(404).json({ success: false, message: "User not found" });
+            return res.status(404).json({ success: false, message: "Користувача не знайдено" });
 
         res.json({ success: true, user: userRes.rows[0] });
     } catch (err) {
@@ -109,19 +127,23 @@ export const getCurrentUser = async (req, res) => {
 export const updateProfile = async (req, res) => {
     try {
         const token = req.headers.authorization?.split(" ")[1];
-        if (!token) return res.status(401).json({ success: false, message: "No token provided" });
+        if (!token)
+            return res.status(401).json({ success: false, message: "Немає токена авторизації" });
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const { name, email } = req.body;
+        const { first_name, last_name, email } = req.body;
 
         const result = await pool.query(
-            "UPDATE users SET name = $1, email = $2 WHERE id = $3 RETURNING id, name, email, role, created_at",
-            [name, email, decoded.id]
+            `UPDATE users
+             SET first_name = $1, last_name = $2, email = $3
+             WHERE id = $4
+                 RETURNING id, first_name, last_name, email, role, created_at`,
+            [first_name, last_name, email, decoded.id]
         );
 
         res.json({
             success: true,
-            message: "Profile updated successfully",
+            message: "Профіль оновлено ✅",
             user: result.rows[0],
         });
     } catch (err) {
@@ -134,23 +156,24 @@ export const updateProfile = async (req, res) => {
 export const changePassword = async (req, res) => {
     try {
         const token = req.headers.authorization?.split(" ")[1];
-        if (!token) return res.status(401).json({ success: false, message: "No token provided" });
+        if (!token)
+            return res.status(401).json({ success: false, message: "Немає токена авторизації" });
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const { oldPassword, newPassword } = req.body;
 
         const userRes = await pool.query("SELECT password FROM users WHERE id = $1", [decoded.id]);
         if (userRes.rows.length === 0)
-            return res.status(404).json({ success: false, message: "User not found" });
+            return res.status(404).json({ success: false, message: "Користувача не знайдено" });
 
         const isMatch = await bcrypt.compare(oldPassword, userRes.rows[0].password);
         if (!isMatch)
-            return res.status(400).json({ success: false, message: "Incorrect old password" });
+            return res.status(400).json({ success: false, message: "Старий пароль невірний" });
 
         const hashed = await bcrypt.hash(newPassword, 10);
         await pool.query("UPDATE users SET password = $1 WHERE id = $2", [hashed, decoded.id]);
 
-        res.json({ success: true, message: "Password updated successfully" });
+        res.json({ success: true, message: "Пароль успішно змінено ✅" });
     } catch (err) {
         console.error("❌ changePassword error:", err);
         res.status(500).json({ success: false, message: "Server error" });

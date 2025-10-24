@@ -4,19 +4,24 @@ import {
     getAllTests,
     deleteTest,
     updateTest,
-    getTestById
+    getTestById,
+    generateCertificate, // 🆕 нова функція
 } from "../controllers/testController.js";
 import authMiddleware, { adminOnly } from "../middleware/authMiddleware.js";
-import { isAdmin } from "../middleware/adminMiddleware.js"; // якщо цей файл у тебе є
+import { isAdmin } from "../middleware/adminMiddleware.js"; // якщо у тебе є цей файл
 
 const router = express.Router();
 
-// 🔒 Лише адмін може створювати / редагувати / видаляти
+// 🌍 Усі користувачі можуть переглядати тести
+router.get("/", getAllTests);
+router.get("/:id", getTestById);
+
+// 🔒 Адмін може створювати / редагувати / видаляти
 router.post("/", authMiddleware, adminOnly, createTest);
 router.put("/:id", authMiddleware, adminOnly, updateTest);
 router.delete("/:id", authMiddleware, adminOnly, deleteTest);
-router.get("/:id", getTestById);
-// 🌍 Усі користувачі можуть переглядати
-router.get("/", getAllTests);
+
+// 🪪 Згенерувати сертифікат (лише авторизовані користувачі)
+router.post("/certificate", authMiddleware, generateCertificate);
 
 export default router;
