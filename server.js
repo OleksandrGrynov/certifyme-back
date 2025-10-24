@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv"; // ① імпорт dotenv
 dotenv.config(); // ② конфігурація має бути ДО всього
-
+import achievementRoutes from "./routes/achievementRoutes.js";
 import { pool } from "./config/db.js";
 
 import userRoutes from "./routes/userRoutes.js";
@@ -20,6 +20,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/contacts", contactRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/achievements", achievementRoutes);
 app.get("/", (req, res) => {
     res.send("🎓 CertifyMe API running...");
 });
