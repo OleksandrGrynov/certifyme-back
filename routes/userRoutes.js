@@ -4,15 +4,21 @@ import {
     loginUser,
     getCurrentUser,
     updateProfile,
-    changePassword
+    changePassword,
+    verifyOtp,
+    setPassword
 } from "../controllers/userController.js";
 
 const router = express.Router();
 
-router.post("/register", registerUser);
-router.post("/login", loginUser);
-router.get("/me", getCurrentUser);
-router.put("/update", updateProfile);
-router.put("/password", changePassword);
-
+// ======================================================
+// 🔹 Основні маршрути користувача
+// ======================================================
+router.post("/register", registerUser);       // реєстрація + надсилання OTP
+router.post("/verify-otp", verifyOtp);        // перевірка OTP і логін
+router.post("/login", loginUser);             // звичайний логін (для тих, хто вже підтвердив)
+router.get("/me", getCurrentUser);            // отримати поточного користувача
+router.put("/update", updateProfile);         // оновити профіль
+router.put("/password", changePassword);      // змінити пароль
+router.post("/set-password", setPassword);
 export default router;
