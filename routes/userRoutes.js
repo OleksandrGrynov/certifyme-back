@@ -6,7 +6,9 @@ import {
     updateProfile,
     changePassword,
     verifyOtp,
-    setPassword
+    setPassword,
+    forgotPassword,
+    resetPassword,
 } from "../controllers/userController.js";
 
 const router = express.Router();
@@ -14,11 +16,14 @@ const router = express.Router();
 // ======================================================
 // 🔹 Основні маршрути користувача
 // ======================================================
-router.post("/register", registerUser);       // реєстрація + надсилання OTP
-router.post("/verify-otp", verifyOtp);        // перевірка OTP і логін
-router.post("/login", loginUser);             // звичайний логін (для тих, хто вже підтвердив)
-router.get("/me", getCurrentUser);            // отримати поточного користувача
-router.put("/update", updateProfile);         // оновити профіль
-router.put("/password", changePassword);      // змінити пароль
-router.post("/set-password", setPassword);
+router.post("/register", registerUser);        // реєстрація + OTP
+router.post("/verify-otp", verifyOtp);         // підтвердження OTP
+router.post("/login", loginUser);              // звичайний логін
+router.get("/me", getCurrentUser);             // поточний користувач
+router.put("/update", updateProfile);          // оновлення профілю
+router.put("/password", changePassword);       // зміна пароля (в профілі)
+router.post("/set-password", setPassword);     // створення після Google
+router.post("/forgot-password", forgotPassword); // лист для відновлення
+router.post("/reset-password", resetPassword);   // новий пароль після листа
+
 export default router;
