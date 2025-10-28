@@ -10,7 +10,8 @@ import reviewRoutes from "./routes/reviewRoutes.js";
 import contactRoutes from "./routes/contactRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import testRoutes from "./routes/testRoutes.js";
-
+import emailRoutes from "./routes/emailRoutes.js";
+import settingsRoutes from "./routes/settingsRoutes.js";
 
 dotenv.config(); // ① має бути ДО всього
 
@@ -28,7 +29,8 @@ app.use("/api/reviews", reviewRoutes);
 app.use("/api/contacts", contactRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/achievements", achievementRoutes);
-
+app.use("/api/auth", emailRoutes);
+app.use("/api/settings", settingsRoutes);
 
 // 🔹 Головна
 app.get("/", (req, res) => {
