@@ -339,3 +339,101 @@ export const setPassword = async (req, res) => {
             .json({ success: false, message: "Помилка сервера під час збереження пароля" });
     }
 };
+// ======================================================
+// 📩 Відновлення пароля — запит на скидання
+// ======================================================
+export const forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email)
+            return res.status(400).json({ success: false, message: "Вкажіть email" });
+
+        const userRes = await pool.query("SELECT id, first_name FROM users WHERE email = $1", [email]);
+        if (userRes.rows.length === 0)
+            return res.status(404).json({ success: false, message: "Користувача не знайдено" });
+
+        const user = userRes.rows[0];
+
+        // 🔐 Генеруємо токен
+        const resetToken = crypto.randomBytes(32).toString("hex");
+        const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 хв
+
+        await pool.query(
+            `UPDATE users SET reset_token = $1, reset_expires = $2 WHERE email = $3`,
+            [resetToken, expires, email]
+        );
+
+        // 🔗 Посилання на фронт
+        const resetLink = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
+
+        // ✉️ HTML-лист
+        const html = `
+          <div style="font-family:system-ui, sans-serif; background:#0d1117; color:#e2e8f0; padding:30px; border-radius:12px; max-width:520px; margin:auto;">
+            <h2 style="color:#4ade80; text-align:center;">🔐 Відновлення пароля | CertifyMe</h2>
+            <p>Привіт, <b>${user.first_name}</b>!</p>
+            <p>Ми отримали запит на зміну пароля до твого акаунта.</p>
+            <p>Натисни кнопку нижче, щоб створити новий пароль:</p>
+            <div style="text-align:center; margin:30px 0;">
+              <a href="${resetLink}" 
+                 style="background:#4ade80;color:#000;padding:12px 26px;text-decoration:none;border-radius:8px;font-weight:600;">
+                 🔁 Змінити пароль
+              </a>
+            </div>
+            <p>Це посилання дійсне протягом <b>15 хвилин</b>.</p>
+            <p style="font-size:14px;color:#94a3b8;">Якщо ти не надсилав запит, просто проігноруй цей лист.</p>
+          </div>
+        `;
+
+        await resend.emails.send({
+            from: process.env.EMAIL_FROM,
+            to: email,
+            subject: "Відновлення пароля | CertifyMe",
+            html,
+        });
+
+        res.json({
+            success: true,
+            message: "📨 Лист із інструкцією надіслано на пошту.",
+        });
+    } catch (err) {
+        console.error("❌ forgotPassword error:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+// ======================================================
+// 🔑 Встановлення нового пароля після переходу з листа
+// ======================================================
+export const resetPassword = async (req, res) => {
+    try {
+        const { token, newPassword } = req.body;
+
+        if (!token || !newPassword)
+            return res.status(400).json({ success: false, message: "Немає токена або нового пароля" });
+
+        const result = await pool.query(
+            `SELECT id, reset_expires FROM users WHERE reset_token = $1`,
+            [token]
+        );
+
+        if (result.rows.length === 0)
+            return res.status(400).json({ success: false, message: "Невірний токен" });
+
+        const user = result.rows[0];
+        if (new Date() > new Date(user.reset_expires))
+            return res.status(400).json({ success: false, message: "Токен прострочений" });
+
+        const hashed = await bcrypt.hash(newPassword, 10);
+        await pool.query(
+            `UPDATE users 
+             SET password = $1, reset_token = NULL, reset_expires = NULL 
+             WHERE id = $2`,
+            [hashed, user.id]
+        );
+
+        res.json({ success: true, message: "Пароль успішно змінено ✅" });
+    } catch (err) {
+        console.error("❌ resetPassword error:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
