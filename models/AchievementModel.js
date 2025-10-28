@@ -59,7 +59,8 @@ export async function ensureUserAchievements(userId) {
         await initUserAchievements(userId);
     }
 }
-// +++ ДОДАЙ У КІНЕЦЬ ФАЙЛУ +++
+
+// 🔹 Розблокувати або оновити досягнення за code
 export async function setAchievementByCode(userId, code, progress) {
     const achieved = Math.min(progress, 100) >= 100;
     const client = await pool.connect();
@@ -75,14 +76,14 @@ export async function setAchievementByCode(userId, code, progress) {
 
         await client.query(
             `INSERT INTO user_achievements (user_id, achievement_id, progress, achieved, achieved_at)
-       VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN NOW() ELSE NULL END)
-       ON CONFLICT (user_id, achievement_id)
-       DO UPDATE SET
-         progress = GREATEST(user_achievements.progress, EXCLUDED.progress),
-         achieved = user_achievements.achieved OR EXCLUDED.achieved,
-         achieved_at = CASE
-            WHEN (user_achievements.achieved = FALSE AND EXCLUDED.achieved = TRUE)
-            THEN NOW() ELSE user_achievements.achieved_at END`,
+             VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN NOW() ELSE NULL END)
+                 ON CONFLICT (user_id, achievement_id)
+             DO UPDATE SET
+                progress = GREATEST(user_achievements.progress, EXCLUDED.progress),
+                                     achieved = user_achievements.achieved OR EXCLUDED.achieved,
+                                     achieved_at = CASE
+                                     WHEN (user_achievements.achieved = FALSE AND EXCLUDED.achieved = TRUE)
+                                     THEN NOW() ELSE user_achievements.achieved_at END`,
             [userId, achievementId, Math.min(progress, 100), achieved]
         );
 
@@ -95,10 +96,31 @@ export async function setAchievementByCode(userId, code, progress) {
     }
 }
 
+// 🔹 Оновити кілька досягнень разом
 export async function updateAchievementsBatch(userId, updates = []) {
     for (const u of updates) {
         // u: { code: string, progress: number }
         await setAchievementByCode(userId, u.code, u.progress ?? 0);
     }
     return true;
+}
+
+// 🔹 Розблокувати досягнення по коду (100% одразу)
+export async function unlockUserAchievementByCode(userId, code) {
+    const res = await pool.query(
+        `SELECT id, title_ua, title_en FROM achievements WHERE code = $1 LIMIT 1`,
+        [code]
+    );
+    if (res.rowCount === 0) return null;
+    const achievement = res.rows[0];
+
+    await pool.query(
+        `INSERT INTO user_achievements (user_id, achievement_id, progress, achieved, achieved_at)
+         VALUES ($1, $2, 100, TRUE, NOW())
+         ON CONFLICT (user_id, achievement_id)
+         DO UPDATE SET progress = 100, achieved = TRUE, achieved_at = NOW()`,
+        [userId, achievement.id]
+    );
+
+    return achievement;
 }
