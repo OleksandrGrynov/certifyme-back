@@ -263,9 +263,9 @@ export const generateCertificate = async (req, res) => {
 
         // === Зберегти в БД ===
         await pool.query(
-            `INSERT INTO certificates (cert_id, user_name, course, issued, expires, percent)
-             VALUES ($1,$2,$3,$4,$5,$6)`,
-            [certId, fullName, test_title, issued, expires, percent]
+            `INSERT INTO certificates (cert_id, user_id, user_name, course, issued, expires, percent)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+            [certId, decoded.id, fullName, test_title, issued, expires, percent]
         );
 
         stream.on("finish", () => res.download(filePath));
@@ -340,7 +340,10 @@ export const verifyCertificate = async (req, res) => {
     try {
         const { cert_id } = req.params;
         const result = await pool.query(
-            "SELECT * FROM certificates WHERE cert_id = $1",
+            `SELECT c.*, json_build_object('id', u.id, 'name', COALESCE(u.first_name || ' ' || u.last_name, c.user_name), 'email', COALESCE(u.email, c.user_email, '-')) AS "user"
+             FROM certificates c
+             LEFT JOIN users u ON u.id = c.user_id
+             WHERE c.cert_id = $1`,
             [cert_id]
         );
 
@@ -358,7 +361,8 @@ export const verifyCertificate = async (req, res) => {
             success: true,
             valid: !isExpired,
             id: cert.cert_id,
-            name: cert.user_name,
+            name: (cert.user && cert.user.name) || cert.user_name,
+            user: cert.user || null,
             course: cert.course,
             issued: new Date(cert.issued).toLocaleDateString("uk-UA"),
             expires: new Date(cert.expires).toLocaleDateString("uk-UA"),
@@ -383,8 +387,12 @@ export const getUserCertificates = async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
         const result = await pool.query(
-            "SELECT cert_id, course, issued, expires, percent FROM certificates WHERE user_name ILIKE $1 ORDER BY issued DESC",
-            [`%${decoded.first_name || ""}%`] // якщо зберігаєш ім’я у user_name
+            `SELECT c.*, json_build_object('id', u.id, 'name', COALESCE(u.first_name || ' ' || u.last_name, c.user_name), 'email', COALESCE(u.email, c.user_email, '-')) AS "user"
+             FROM certificates c
+             LEFT JOIN users u ON u.id = c.user_id
+             WHERE c.user_id = $1 OR c.user_name ILIKE $2
+             ORDER BY c.issued DESC`,
+            [decoded.id, `%${decoded.first_name || ''}%`]
         );
 
         res.json({ success: true, certificates: result.rows });
