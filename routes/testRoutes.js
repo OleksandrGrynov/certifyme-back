@@ -4,7 +4,7 @@ import {
     createTest, getAllTests, deleteTest, updateTest,
     getTestById, generateCertificate, verifyCertificate
 } from "../controllers/testController.js";
-import authMiddleware, { adminOnly } from "../middleware/authMiddleware.js";
+import authMiddleware, { isAdmin } from "../middleware/authMiddleware.js";
 import { explainOneQuestion } from "../controllers/explanationController.js";
 import { getUserCertificates } from "../controllers/testController.js";
 import { pool } from "../config/db.js";
@@ -21,16 +21,16 @@ router.get("/certificates/:cert_id", verifyCertificate);
 router.get("/:id", getTestById);
 
 // 🔒 Адмінка
-router.post("/", authMiddleware, adminOnly, createTest);
-router.put("/:id", authMiddleware, adminOnly, updateTest);
-router.delete("/:id", authMiddleware, adminOnly, deleteTest);
+router.post("/", authMiddleware, isAdmin, createTest);
+router.put("/:id", authMiddleware, isAdmin, updateTest);
+router.delete("/:id", authMiddleware, isAdmin, deleteTest);
 
 // 🪪 Генерація PDF
 router.post("/certificate", authMiddleware, generateCertificate);
 
 // 🧠 Пояснення
 router.post("/explain-one", explainOneQuestion);
-router.put("/:id/questions", authMiddleware, adminOnly, async (req, res) => {
+router.put("/:id/questions", authMiddleware, isAdmin, async (req, res) => {
     const {id} = req.params;
     const {questions} = req.body;
 

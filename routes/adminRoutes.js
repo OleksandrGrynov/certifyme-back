@@ -1,8 +1,7 @@
 // adminRoutes.js
 import express from "express";
 import { pool } from "../config/db.js";
-import authMiddleware from "../middleware/authMiddleware.js";
-import { isAdmin } from "../middleware/adminMiddleware.js";
+import authMiddleware, { isAdmin } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
