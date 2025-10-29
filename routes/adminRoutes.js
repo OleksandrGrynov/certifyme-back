@@ -27,19 +27,77 @@ router.get("/users", authMiddleware, isAdmin, async (req, res) => {
 
 // 🔹 Видалити користувача
 router.delete("/users/:id", authMiddleware, isAdmin, async (req, res) => {
+    const client = await pool.connect();
     try {
         const { id } = req.params;
-        const userRes = await pool.query("SELECT role FROM users WHERE id = $1", [id]);
+        const userRes = await client.query("SELECT role FROM users WHERE id = $1", [id]);
         if (userRes.rows.length === 0)
             return res.status(404).json({ success: false, message: "Користувача не знайдено" });
 
         if (userRes.rows[0].role === "admin")
             return res.status(403).json({ success: false, message: "Неможливо видалити адміністратора" });
 
-        await pool.query("DELETE FROM users WHERE id = $1", [id]);
+        // Виконуємо каскадне видалення вручну в транзакції як безпечний fallback
+        await client.query("BEGIN");
+
+        // Видаляємо сертифікати, досягнення та інші пов'язані дані
+        await client.query("DELETE FROM certificates WHERE user_id = $1", [id]);
+        await client.query("DELETE FROM user_achievements WHERE user_id = $1", [id]);
+        // Додаткові таблиці, якщо вони є у вашій БД — розкоментуйте або додайте тут
+        // await client.query("DELETE FROM reviews WHERE user_id = $1", [id]);
+        // await client.query("DELETE FROM submissions WHERE user_id = $1", [id]);
+
+        // Власне видалення користувача
+        await client.query("DELETE FROM users WHERE id = $1", [id]);
+
+        await client.query("COMMIT");
         res.json({ success: true });
     } catch (err) {
+        await client.query("ROLLBACK");
         console.error("❌ deleteUser error:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    } finally {
+        client.release();
+    }
+});
+
+// 🔹 Оновити роль користувача (адмін)
+router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { role } = req.body;
+
+        const allowedRoles = ["user", "admin"];
+        if (!role || !allowedRoles.includes(role)) {
+            return res.status(400).json({ success: false, message: "Invalid role" });
+        }
+
+        // Перевіряємо, чи існує користувач
+        const userRes = await pool.query("SELECT id, role FROM users WHERE id = $1", [id]);
+        if (userRes.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Користувача не знайдено" });
+        }
+
+        const currentRole = userRes.rows[0].role;
+
+        // Якщо намагаються понизити останнього адміна — заборонити
+        if (currentRole === "admin" && role !== "admin") {
+            const adminsCountRes = await pool.query("SELECT COUNT(*) FROM users WHERE role = 'admin'");
+            const adminsCount = Number(adminsCountRes.rows[0].count || 0);
+            if (adminsCount <= 1) {
+                return res.status(400).json({ success: false, message: "Неможливо понизити останнього адміністратора" });
+            }
+        }
+
+        // Оновлюємо роль
+        const updated = await pool.query(
+            `UPDATE users SET role = $1 WHERE id = $2 RETURNING id, first_name, last_name, email, role, created_at`,
+            [role, id]
+        );
+
+        res.json({ success: true, user: updated.rows[0] });
+    } catch (err) {
+        console.error("❌ updateUserRole error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
@@ -49,15 +107,14 @@ router.get("/certificates", authMiddleware, isAdmin, async (req, res) => {
     try {
         const query = `
             SELECT
-                c.id,
-                c.cert_id,
-                COALESCE(u.first_name || ' ' || u.last_name, c.user_name) AS user_name,
-                COALESCE(u.email, '-') AS user_email,
-                COALESCE(t.title_ua, c.course) AS test_title,
-                c.percent,
-                c.issued AS created_at,
-                c.expires,
-                c.verified
+                c.*,
+                -- Повертаємо master user як JSON-об'єкт (якщо є), але зберігаємо legacy-поля для backward-compat
+                json_build_object(
+                  'id', u.id,
+                  'name', COALESCE(u.first_name || ' ' || u.last_name, c.user_name),
+                  'email', COALESCE(u.email, c.user_email, '-')
+                ) AS "user",
+                COALESCE(t.title_ua, c.course) AS test_title
             FROM certificates c
                      LEFT JOIN users u ON u.id = c.user_id
                      LEFT JOIN tests t ON t.id = c.test_id
@@ -70,7 +127,6 @@ router.get("/certificates", authMiddleware, isAdmin, async (req, res) => {
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
-
 
 // 🔹 Видалити сертифікат
 router.delete("/certificates/:id", authMiddleware, isAdmin, async (req, res) => {
