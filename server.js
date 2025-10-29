@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { pool } from "./config/db.js";
+import cookieParser from 'cookie-parser';
 
 import achievementRoutes from "./routes/achievementRoutes.js";
 import googleAuthRoutes from "./routes/googleAuthRoutes.js";
@@ -12,14 +13,17 @@ import adminRoutes from "./routes/adminRoutes.js";
 import testRoutes from "./routes/testRoutes.js";
 import emailRoutes from "./routes/emailRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
+import adminAnalyticsRoutes from "./routes/adminAnalyticsRoutes.js";
+import analyticsRoutes from "./routes/analyticsRoutes.js";
 
 dotenv.config(); // ① має бути ДО всього
 
 const app = express();
 
 // 🔹 Middleware
-app.use(cors({ origin: "http://localhost:5173" }));
+app.use(cors({ origin: "http://localhost:5173", credentials: true }));
 app.use(express.json());
+app.use(cookieParser());
 
 // 🔹 Маршрути
 app.use("/api/auth", googleAuthRoutes);
@@ -28,9 +32,11 @@ app.use("/api/users", userRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/contacts", contactRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/admin", adminAnalyticsRoutes);
 app.use("/api/achievements", achievementRoutes);
 app.use("/api/auth", emailRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // 🔹 Головна
 app.get("/", (req, res) => {
