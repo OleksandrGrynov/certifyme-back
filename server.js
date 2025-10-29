@@ -1,9 +1,10 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { pool } from "./config/db.js";
-import cookieParser from 'cookie-parser';
+import cookieParser from "cookie-parser";
+import { stripeWebhook } from "./controllers/paymentController.js"; // ⬅️ Додано тут
 
+import { pool } from "./config/db.js";
 import achievementRoutes from "./routes/achievementRoutes.js";
 import googleAuthRoutes from "./routes/googleAuthRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -15,14 +16,20 @@ import emailRoutes from "./routes/emailRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
 import adminAnalyticsRoutes from "./routes/adminAnalyticsRoutes.js";
 import analyticsRoutes from "./routes/analyticsRoutes.js";
+import paymentRoutes from "./routes/paymentRoutes.js";
+import userTestsRoutes from "./routes/userTestsRoutes.js";
 
-dotenv.config(); // ① має бути ДО всього
+dotenv.config();
 
 const app = express();
 
-// 🔹 Middleware
+/* 🔥 Stripe webhook має бути САМЕ перед express.json()
+   і використовувати express.raw(), щоб Stripe міг перевірити підпис */
+app.post("/api/payments/webhook", express.raw({ type: "application/json" }), stripeWebhook);
+
+// Інші мідлвари
 app.use(cors({ origin: "http://localhost:5173", credentials: true }));
-app.use(express.json());
+app.use(express.json()); // <--- тільки після webhook
 app.use(cookieParser());
 
 // 🔹 Маршрути
@@ -36,7 +43,9 @@ app.use("/api/admin", adminAnalyticsRoutes);
 app.use("/api/achievements", achievementRoutes);
 app.use("/api/auth", emailRoutes);
 app.use("/api/settings", settingsRoutes);
-app.use('/api/analytics', analyticsRoutes);
+app.use("/api/analytics", analyticsRoutes);
+app.use("/api/payments", paymentRoutes); // 🔹 без webhook тут
+app.use("/api/user", userTestsRoutes);
 
 // 🔹 Головна
 app.get("/", (req, res) => {
