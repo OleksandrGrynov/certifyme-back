@@ -9,6 +9,9 @@ export const createCheckoutSession = async (req, res) => {
         const { testId } = req.body;
         if (!testId) return res.status(400).json({ message: "testId required" });
 
+        // 🔹 Якщо немає авторизації (тимчасово для дебагу)
+        const userId = req.user?.id || 1; // TODO: замінити 1 на реальний user_id після тестів
+
         // ✅ Отримуємо дані тесту
         const testRes = await pool.query(
             "SELECT id, title_ua, title_en, price_cents, currency FROM tests WHERE id=$1",
@@ -17,29 +20,26 @@ export const createCheckoutSession = async (req, res) => {
         const test = testRes.rows[0];
         if (!test) return res.status(404).json({ message: "Test not found" });
 
-        // fallback назви (англійська або українська)
         const testTitle = test.title_en || test.title_ua || "Test";
+        const amount = Number(test.price_cents) > 0 ? Number(test.price_cents) : 100;
 
-        // ✅ мінімальна ціна для Stripe — 50 центів (0.5 USD)
-        const amount = test.price_cents > 0 ? test.price_cents : 50;
-
-        // 🧩 створюємо запис у таблиці payments
+        // 🧩 Створюємо запис у таблиці payments
         const paymentInsert = await pool.query(
             `INSERT INTO payments (user_id, test_id, amount_cents, currency, status)
              VALUES ($1,$2,$3,$4,'pending') RETURNING id`,
-            [req.user.id, test.id, amount, test.currency || "usd"]
+            [userId, test.id, amount, test.currency || "usd"]
         );
         const paymentId = paymentInsert.rows[0].id;
 
-        console.log("🧾 Creating Stripe session:", {
-            userId: req.user.id,
-            testId,
-            paymentId
-        });
+        console.log("🧾 Creating Stripe session:", { userId, testId, paymentId, amount });
 
-        // 🧾 створюємо Stripe Checkout Session
+        // ✅ Stripe Checkout Session
         const session = await stripe.checkout.sessions.create({
             mode: "payment",
+
+            // ✅ підтримується у всіх версіях
+            payment_method_types: ["card"],
+
             line_items: [
                 {
                     price_data: {
@@ -52,17 +52,28 @@ export const createCheckoutSession = async (req, res) => {
                     quantity: 1,
                 },
             ],
-            // ✅ ВАЖЛИВО: Stripe приймає тільки рядкові значення у metadata
+
             metadata: {
-                userId: String(req.user.id),
+                userId: String(userId),
                 testId: String(testId),
                 paymentId: String(paymentId),
             },
+
+            payment_intent_data: {
+                metadata: {
+                    userId: String(userId),
+                    testId: String(testId),
+                    paymentId: String(paymentId),
+                },
+            },
+
+            client_reference_id: `${userId}-${testId}-${paymentId}`,
             success_url: `${process.env.APP_URL}/tests?paid=true`,
             cancel_url: `${process.env.APP_URL}/tests?paid=false`,
         });
 
-        // зберігаємо id сесії Stripe
+
+        // 💾 Оновлюємо session_id у БД
         await pool.query(
             "UPDATE payments SET stripe_session_id=$1 WHERE id=$2",
             [session.id, paymentId]
@@ -70,8 +81,14 @@ export const createCheckoutSession = async (req, res) => {
 
         res.json({ url: session.url });
     } catch (err) {
-        console.error("❌ Помилка створення сесії:", err);
-        res.status(500).json({ message: "Помилка створення сесії", error: err.message });
+        console.error("❌ Помилка створення сесії:", {
+            message: err.message,
+            stack: err.stack,
+        });
+        res.status(500).json({
+            message: "Помилка створення сесії",
+            error: err.message,
+        });
     }
 };
 
@@ -79,11 +96,8 @@ export const createCheckoutSession = async (req, res) => {
 export const stripeWebhook = async (req, res) => {
     console.log("⚡ Stripe webhook received");
 
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
     const sig = req.headers["stripe-signature"];
-
     try {
-        // 1️⃣ Пробуємо розпарсити подію
         const event = stripe.webhooks.constructEvent(
             req.body,
             sig,
@@ -92,20 +106,39 @@ export const stripeWebhook = async (req, res) => {
 
         console.log("✅ Webhook event type:", event.type);
 
-        // 2️⃣ Обробка події оплати
         if (event.type === "checkout.session.completed") {
             const session = event.data.object;
-            console.log("💳 Checkout completed:", session.id);
-            console.log("📦 Metadata:", session.metadata);
 
-            const { userId, testId, paymentId } = session.metadata;
+            // 🔹 1. Пробуємо metadata
+            let metadata = session.metadata || {};
 
+            // 🔹 2. Якщо порожнє — пробуємо з payment_intent
+            if ((!metadata || Object.keys(metadata).length === 0) && session.payment_intent) {
+                const intent = await stripe.paymentIntents.retrieve(session.payment_intent);
+                metadata = intent.metadata || {};
+                console.log("📦 Retrieved metadata from payment_intent:", metadata);
+            }
+
+            // 🔹 3. Якщо все ще порожнє — парсимо client_reference_id
+            if ((!metadata || Object.keys(metadata).length === 0) && session.client_reference_id) {
+                const parts = session.client_reference_id.split("-");
+                if (parts.length === 3) {
+                    metadata = {
+                        userId: parts[0],
+                        testId: parts[1],
+                        paymentId: parts[2],
+                    };
+                    console.log("🔍 Parsed from client_reference_id:", metadata);
+                }
+            }
+
+            const { userId, testId, paymentId } = metadata;
             if (!userId || !testId) {
-                console.warn("⚠️ Missing metadata:", session.metadata);
+                console.warn("⚠️ Missing metadata after all attempts:", metadata);
                 return res.status(400).json({ message: "Missing metadata" });
             }
 
-            // Оновлюємо статус платежу
+            // 🔹 4. Оновлюємо статус платежу
             await pool.query(
                 `UPDATE payments
                  SET status='succeeded', stripe_payment_intent=$1
@@ -113,7 +146,7 @@ export const stripeWebhook = async (req, res) => {
                 [session.payment_intent || null, paymentId]
             );
 
-            // Додаємо доступ користувачу
+            // 🔹 5. Додаємо доступ користувачу
             await pool.query(
                 `INSERT INTO user_tests (user_id, test_id, granted_at)
                  VALUES ($1, $2, NOW())
@@ -124,15 +157,9 @@ export const stripeWebhook = async (req, res) => {
             console.log(`🎉 Access granted → user_id=${userId}, test_id=${testId}`);
         }
 
-        // 3️⃣ Відповідь Stripe
         res.json({ received: true });
     } catch (err) {
-        console.error("❌ Webhook error:", err.message);
-        console.error("🧩 Raw body length:", req.body?.length || 0);
-        console.error(
-            "🔑 Stripe secret used:",
-            process.env.STRIPE_WEBHOOK_SECRET?.slice(0, 12) + "..."
-        );
+        console.error("❌ Webhook error:", { message: err.message, stack: err.stack });
         res.status(400).send(`Webhook Error: ${err.message}`);
     }
 };
