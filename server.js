@@ -2,7 +2,8 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
-import { stripeWebhook } from "./controllers/paymentController.js"; // ⬅️ Додано тут
+import bodyParser from "body-parser";
+import { stripeWebhook } from "./controllers/paymentController.js";
 
 import { pool } from "./config/db.js";
 import achievementRoutes from "./routes/achievementRoutes.js";
@@ -18,18 +19,24 @@ import adminAnalyticsRoutes from "./routes/adminAnalyticsRoutes.js";
 import analyticsRoutes from "./routes/analyticsRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
 import userTestsRoutes from "./routes/userTestsRoutes.js";
+import certificateRoutes from "./routes/certificateRoutes.js";
+import path from "path";
 
 dotenv.config();
 
 const app = express();
 
-/* 🔥 Stripe webhook має бути САМЕ перед express.json()
-   і використовувати express.raw(), щоб Stripe міг перевірити підпис */
-app.post("/api/payments/webhook", express.raw({ type: "application/json" }), stripeWebhook);
+/* ⚡ Stripe webhook — ОБОВ’ЯЗКОВО перед express.json()
+   має використовувати raw body, щоб перевірка підпису працювала */
+app.post(
+    "/api/payments/webhook",
+    bodyParser.raw({ type: "application/json" }),
+    stripeWebhook
+);
 
-// Інші мідлвари
+// 🧠 Інші middleware після webhook
 app.use(cors({ origin: "http://localhost:5173", credentials: true }));
-app.use(express.json()); // <--- тільки після webhook
+app.use(express.json());
 app.use(cookieParser());
 
 // 🔹 Маршрути
@@ -44,10 +51,11 @@ app.use("/api/achievements", achievementRoutes);
 app.use("/api/auth", emailRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/analytics", analyticsRoutes);
-app.use("/api/payments", paymentRoutes); // 🔹 без webhook тут
+app.use("/api/payments", paymentRoutes); // 🔹 без webhook
 app.use("/api/user", userTestsRoutes);
-
-// 🔹 Головна
+app.use("/certificates", express.static(path.join(process.cwd(), "certificates")));
+app.use("/api/certificates", certificateRoutes);
+// 🔹 Перевірка API
 app.get("/", (req, res) => {
     res.send("🎓 CertifyMe API running...");
 });
