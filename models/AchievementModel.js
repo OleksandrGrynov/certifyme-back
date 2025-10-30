@@ -1,24 +1,33 @@
 import { pool } from "../config/db.js";
 
-// 🔹 Отримати всі досягнення користувача
-export async function getUserAchievements(userId) {
+// 🔹 Отримати всі досягнення користувача з урахуванням мови
+export async function getUserAchievements(userId, lang = "ua") {
+    const isEnglish = lang === "en";
+
     const result = await pool.query(
-        `SELECT a.id,
-                a.title_ua,
-                a.title_en,
-                a.description_ua,
-                a.description_en,
-                a.category,
-                a.icon,
-                ua.progress,
-                ua.achieved,
-                ua.achieved_at
-         FROM user_achievements ua
-                  JOIN achievements a ON a.id = ua.achievement_id
-         WHERE ua.user_id = $1
-         ORDER BY a.category, a.id`,
-        [userId]
+        `
+        SELECT 
+            a.id,
+            a.title_ua,
+            a.title_en,
+            a.description_ua,
+            a.description_en,
+            a.category,
+            a.icon,
+            ua.progress,
+            ua.achieved,
+            ua.achieved_at,
+            -- 🧩 додаємо локалізовані поля
+            CASE WHEN $2 = 'en' THEN a.title_en ELSE a.title_ua END AS title,
+            CASE WHEN $2 = 'en' THEN a.description_en ELSE a.description_ua END AS description
+        FROM user_achievements ua
+                 JOIN achievements a ON a.id = ua.achievement_id
+        WHERE ua.user_id = $1
+        ORDER BY a.category, a.id;
+        `,
+        [userId, lang]
     );
+
     return result.rows;
 }
 
@@ -28,11 +37,13 @@ export async function updateUserAchievement(userId, achievementId, newProgress) 
     const achieved = progress >= 100;
 
     await pool.query(
-        `UPDATE user_achievements
-         SET progress = $1,
-             achieved = $2,
-             achieved_at = CASE WHEN $2 THEN NOW() ELSE achieved_at END
-         WHERE user_id = $3 AND achievement_id = $4`,
+        `
+            UPDATE user_achievements
+            SET progress = $1,
+                achieved = $2,
+                achieved_at = CASE WHEN $2 THEN NOW() ELSE achieved_at END
+            WHERE user_id = $3 AND achievement_id = $4
+        `,
         [progress, achieved, userId, achievementId]
     );
 }
@@ -40,9 +51,11 @@ export async function updateUserAchievement(userId, achievementId, newProgress) 
 // 🔹 Ініціалізувати досягнення для користувача
 export async function initUserAchievements(userId) {
     await pool.query(
-        `INSERT INTO user_achievements (user_id, achievement_id)
-         SELECT $1, id FROM achievements
-             ON CONFLICT DO NOTHING`,
+        `
+            INSERT INTO user_achievements (user_id, achievement_id)
+            SELECT $1, id FROM achievements
+                ON CONFLICT DO NOTHING
+        `,
         [userId]
     );
 }
@@ -75,15 +88,19 @@ export async function setAchievementByCode(userId, code, progress) {
         const achievementId = a.rows[0].id;
 
         await client.query(
-            `INSERT INTO user_achievements (user_id, achievement_id, progress, achieved, achieved_at)
-             VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN NOW() ELSE NULL END)
-                 ON CONFLICT (user_id, achievement_id)
-             DO UPDATE SET
-                progress = GREATEST(user_achievements.progress, EXCLUDED.progress),
-                                     achieved = user_achievements.achieved OR EXCLUDED.achieved,
-                                     achieved_at = CASE
-                                     WHEN (user_achievements.achieved = FALSE AND EXCLUDED.achieved = TRUE)
-                                     THEN NOW() ELSE user_achievements.achieved_at END`,
+            `
+                INSERT INTO user_achievements (user_id, achievement_id, progress, achieved, achieved_at)
+                VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN NOW() ELSE NULL END)
+                    ON CONFLICT (user_id, achievement_id)
+            DO UPDATE SET
+                    progress = GREATEST(user_achievements.progress, EXCLUDED.progress),
+                                       achieved = user_achievements.achieved OR EXCLUDED.achieved,
+                                       achieved_at = CASE
+                                       WHEN (user_achievements.achieved = FALSE AND EXCLUDED.achieved = TRUE)
+                                       THEN NOW()
+                                       ELSE user_achievements.achieved_at
+                END;
+            `,
             [userId, achievementId, Math.min(progress, 100), achieved]
         );
 
@@ -99,7 +116,6 @@ export async function setAchievementByCode(userId, code, progress) {
 // 🔹 Оновити кілька досягнень разом
 export async function updateAchievementsBatch(userId, updates = []) {
     for (const u of updates) {
-        // u: { code: string, progress: number }
         await setAchievementByCode(userId, u.code, u.progress ?? 0);
     }
     return true;
@@ -115,10 +131,12 @@ export async function unlockUserAchievementByCode(userId, code) {
     const achievement = res.rows[0];
 
     await pool.query(
-        `INSERT INTO user_achievements (user_id, achievement_id, progress, achieved, achieved_at)
-         VALUES ($1, $2, 100, TRUE, NOW())
-         ON CONFLICT (user_id, achievement_id)
-         DO UPDATE SET progress = 100, achieved = TRUE, achieved_at = NOW()`,
+        `
+            INSERT INTO user_achievements (user_id, achievement_id, progress, achieved, achieved_at)
+            VALUES ($1, $2, 100, TRUE, NOW())
+                ON CONFLICT (user_id, achievement_id)
+        DO UPDATE SET progress = 100, achieved = TRUE, achieved_at = NOW()
+        `,
         [userId, achievement.id]
     );
 
