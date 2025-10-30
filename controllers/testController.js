@@ -130,6 +130,7 @@ export const getTestById = async (req, res) => {
 };
 
 // 🧾 Генерація красивого сертифіката з QR-кодом
+// 🧾 Генерація сертифіката з QR-кодом і двома мовами
 export const generateCertificate = async (req, res) => {
     try {
         const token = req.headers.authorization?.split(" ")[1];
@@ -145,7 +146,22 @@ export const generateCertificate = async (req, res) => {
         if (userRes.rows.length === 0)
             return res.status(404).json({ success: false, message: "User not found" });
 
-        const { test_title, score, total } = req.body;
+        const { test_id, test_title, score, total } = req.body;
+
+        // ✅ Якщо test_id переданий — знайдемо назви курсу в БД
+        let course_ua = test_title;
+        let course_en = test_title;
+        if (test_id) {
+            const testRes = await pool.query(
+                "SELECT title_ua, title_en FROM tests WHERE id = $1",
+                [test_id]
+            );
+            if (testRes.rows.length > 0) {
+                course_ua = testRes.rows[0].title_ua;
+                course_en = testRes.rows[0].title_en;
+            }
+        }
+
         const fullName = `${userRes.rows[0].first_name} ${userRes.rows[0].last_name}`;
         const percent = Math.round((score / total) * 100);
         const certId = `C-UA-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -153,7 +169,7 @@ export const generateCertificate = async (req, res) => {
         const expires = new Date();
         expires.setFullYear(expires.getFullYear() + 1);
 
-        // === Генерація QR-коду ===
+        // === QR-код ===
         const verifyUrl = `http://localhost:5173/verify/${certId}`;
         fs.mkdirSync("certificates", { recursive: true });
         const qrPath = path.join("certificates", `qr_${certId}.png`);
@@ -220,7 +236,7 @@ export const generateCertificate = async (req, res) => {
         cursorY += 18;
 
         doc.fontSize(16).fillColor("#00703C")
-            .text(`«${test_title}»`, MARGIN, cursorY, { width: INNER_W, align: "center" });
+            .text(`«${course_ua}»`, MARGIN, cursorY, { width: INNER_W, align: "center" });
         cursorY += 22;
 
         doc.fontSize(12).fillColor("#333")
@@ -238,7 +254,6 @@ export const generateCertificate = async (req, res) => {
         doc.text("__________________", LEFT_X, PAGE_H - MARGIN - 130);
         doc.text("Підпис викладача", LEFT_X + 5, PAGE_H - MARGIN - 112);
 
-        // === Печатка ===
         if (fs.existsSync(stampPath)) {
             doc.image(stampPath, RIGHT_X, PAGE_H - MARGIN - 142, { width: 96 });
         }
@@ -255,17 +270,16 @@ export const generateCertificate = async (req, res) => {
                 .text(verifyUrl, QR_X - 20, QR_Y + QR_W + 20, { width: QR_W + 40, align: "center" });
         }
 
-        // === Нижній текст ===
         doc.fontSize(10).fillColor("#00703C")
             .text("CertifyMe © 2025", MARGIN, PAGE_H - MARGIN, { width: INNER_W, align: "right" });
 
         doc.end();
 
-        // === Зберегти в БД ===
+        // === 🧾 Зберігаємо в БД обидві мови ===
         await pool.query(
-            `INSERT INTO certificates (cert_id, user_id, user_name, course, issued, expires, percent)
-             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-            [certId, decoded.id, fullName, test_title, issued, expires, percent]
+            `INSERT INTO certificates (cert_id, user_id, user_name, course, course_en, test_id, issued, expires, percent)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            [certId, decoded.id, fullName, course_ua, course_en, test_id, issued, expires, percent]
         );
 
         stream.on("finish", () => res.download(filePath));
@@ -277,6 +291,7 @@ export const generateCertificate = async (req, res) => {
         });
     }
 };
+
 
 // 🗑️ Видалити тест
 export const deleteTest = async (req, res) => {
@@ -295,16 +310,35 @@ export const deleteTest = async (req, res) => {
     }
 };
 
-// 🧩 Отримати всі тести
+// 🧩 Отримати всі тести з урахуванням мови
 export const getAllTests = async (req, res) => {
     try {
-        const result = await pool.query("SELECT * FROM tests ORDER BY id ASC");
-        res.json({ success: true, tests: result.rows });
+        const lang = req.query.lang === "en" ? "en" : "ua";
+
+        // Вибираємо потрібні колонки залежно від мови
+        const titleField = lang === "en" ? "title_en" : "title_ua";
+        const descField = lang === "en" ? "description_en" : "description_ua";
+
+        const result = await pool.query(
+            `
+            SELECT 
+                id,
+                ${titleField} AS title,
+                ${descField} AS description,
+                image_url,
+                created_at
+            FROM tests
+            ORDER BY id ASC
+            `
+        );
+
+        res.json({ success: true, tests: result.rows, lang });
     } catch (err) {
         console.error("❌ getAllTests error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
+
 
 // ✏️ Оновити тест
 export const updateTest = async (req, res) => {
@@ -387,11 +421,27 @@ export const getUserCertificates = async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
         const result = await pool.query(
-            `SELECT c.*, json_build_object('id', u.id, 'name', COALESCE(u.first_name || ' ' || u.last_name, c.user_name), 'email', COALESCE(u.email, c.user_email, '-')) AS "user"
-             FROM certificates c
-             LEFT JOIN users u ON u.id = c.user_id
-             WHERE c.user_id = $1 OR c.user_name ILIKE $2
-             ORDER BY c.issued DESC`,
+            `
+                SELECT
+                    c.cert_id,
+                    c.user_id,
+                    c.test_id,
+                    c.issued,
+                    c.expires,
+                    c.percent,
+                    COALESCE(t.title_ua, c.course) AS course_ua,
+                    COALESCE(t.title_en, c.course) AS course_en,
+                    json_build_object(
+                            'id', u.id,
+                            'name', COALESCE(u.first_name || ' ' || u.last_name, c.user_name),
+                            'email', COALESCE(u.email, c.user_email, '-')
+                    ) AS "user"
+                FROM certificates c
+                         LEFT JOIN users u ON u.id = c.user_id
+                         LEFT JOIN tests t ON t.id = c.test_id
+                WHERE c.user_id = $1 OR c.user_name ILIKE $2
+                ORDER BY c.issued DESC;
+            `,
             [decoded.id, `%${decoded.first_name || ''}%`]
         );
 
