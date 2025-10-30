@@ -81,20 +81,29 @@ router.get("/analytics/payments-daily", authMiddleware, isAdmin, async (req, res
 /* -------------------- 🧾 ТОП ТЕСТІВ -------------------- */
 router.get("/analytics/top-tests", authMiddleware, isAdmin, async (req, res) => {
     try {
+        const lang = req.query.lang === "en" ? "en" : "ua";
+
         const result = await pool.query(`
-            SELECT t.title_ua AS test, COUNT(c.id)::int AS count, ROUND(AVG(c.percent),1) AS avg_score
+            SELECT 
+                t.title_${lang} AS test,
+                COUNT(c.id)::int AS count,
+                ROUND(AVG(c.percent), 1) AS avg_score
             FROM certificates c
-                JOIN tests t ON c.test_id = t.id
-            GROUP BY t.title_ua
+            JOIN tests t 
+              ON LOWER(t.title_${lang}) = LOWER(c.course_en)
+              OR LOWER(t.title_${lang}) = LOWER(c.course)
+            GROUP BY t.title_${lang}
             ORDER BY count DESC
-                LIMIT 10;
+            LIMIT 10;
         `);
+
         res.json({ success: true, data: result.rows });
     } catch (err) {
         console.error("❌ top-tests error:", err);
-        res.status(500).json({ success: false });
+        res.status(500).json({ success: false, message: err.message });
     }
 });
+
 
 /* -------------------- 👑 ТОП КОРИСТУВАЧІ -------------------- */
 router.get("/analytics/top-users", authMiddleware, isAdmin, async (req, res) => {
