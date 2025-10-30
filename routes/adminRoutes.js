@@ -1,11 +1,12 @@
-// adminRoutes.js
 import express from "express";
 import { pool } from "../config/db.js";
 import authMiddleware, { isAdmin } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-// 🔹 Отримати всіх користувачів
+/* ============================================================
+   🔹 1. Отримати всіх користувачів
+============================================================ */
 router.get("/users", authMiddleware, isAdmin, async (req, res) => {
     try {
         const result = await pool.query(`
@@ -25,33 +26,78 @@ router.get("/users", authMiddleware, isAdmin, async (req, res) => {
     }
 });
 
-// 🔹 Видалити користувача
+/* ============================================================
+   🔹 2. Видалити користувача (з архівацією платежів)
+============================================================ */
 router.delete("/users/:id", authMiddleware, isAdmin, async (req, res) => {
     const client = await pool.connect();
     try {
         const { id } = req.params;
-        const userRes = await client.query("SELECT role FROM users WHERE id = $1", [id]);
+
+        // 🧩 Перевірити чи існує користувач
+        const userRes = await client.query(
+            "SELECT first_name, last_name, email, role FROM users WHERE id = $1",
+            [id]
+        );
         if (userRes.rows.length === 0)
-            return res.status(404).json({ success: false, message: "Користувача не знайдено" });
+            return res
+                .status(404)
+                .json({ success: false, message: "Користувача не знайдено" });
 
-        if (userRes.rows[0].role === "admin")
-            return res.status(403).json({ success: false, message: "Неможливо видалити адміністратора" });
+        const user = userRes.rows[0];
+        if (user.role === "admin")
+            return res
+                .status(403)
+                .json({ success: false, message: "Неможливо видалити адміністратора" });
 
-        // Виконуємо каскадне видалення вручну в транзакції як безпечний fallback
         await client.query("BEGIN");
 
-        // Видаляємо сертифікати, досягнення та інші пов'язані дані
+        // 🏦 1️⃣ Архівуємо платежі користувача перед видаленням
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS payment_archive (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER,
+        user_email VARCHAR(255),
+        user_name VARCHAR(255),
+        amount_usd DECIMAL(10,2),
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+        const payments = await client.query(
+            "SELECT amount_cents, created_at FROM payments WHERE user_id = $1",
+            [id]
+        );
+
+        for (const p of payments.rows) {
+            await client.query(
+                `INSERT INTO payment_archive (user_id, user_email, user_name, amount_usd, created_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+                [
+                    id,
+                    user.email,
+                    `${user.first_name} ${user.last_name}`,
+                    (p.amount_cents || 0) / 100,
+                    p.created_at,
+                ]
+            );
+        }
+
+        // 🧹 2️⃣ Видаляємо пов’язані записи
         await client.query("DELETE FROM certificates WHERE user_id = $1", [id]);
         await client.query("DELETE FROM user_achievements WHERE user_id = $1", [id]);
-        // Додаткові таблиці, якщо вони є у вашій БД — розкоментуйте або додайте тут
-        // await client.query("DELETE FROM reviews WHERE user_id = $1", [id]);
-        // await client.query("DELETE FROM submissions WHERE user_id = $1", [id]);
+        await client.query("DELETE FROM user_tests WHERE user_id = $1", [id]);
+        await client.query("DELETE FROM payments WHERE user_id = $1", [id]);
 
-        // Власне видалення користувача
+        // 🧍 3️⃣ Видаляємо самого користувача
         await client.query("DELETE FROM users WHERE id = $1", [id]);
 
         await client.query("COMMIT");
-        res.json({ success: true });
+        res.json({
+            success: true,
+            message:
+                "Користувача та пов'язані дані видалено, оплати архівовано для аналітики.",
+        });
     } catch (err) {
         await client.query("ROLLBACK");
         console.error("❌ deleteUser error:", err);
@@ -61,7 +107,9 @@ router.delete("/users/:id", authMiddleware, isAdmin, async (req, res) => {
     }
 });
 
-// 🔹 Оновити роль користувача (адмін)
+/* ============================================================
+   🔹 3. Оновити роль користувача
+============================================================ */
 router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
     try {
         const { id } = req.params;
@@ -72,7 +120,7 @@ router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
             return res.status(400).json({ success: false, message: "Invalid role" });
         }
 
-        // Перевіряємо, чи існує користувач
+        // Перевірка існування користувача
         const userRes = await pool.query("SELECT id, role FROM users WHERE id = $1", [id]);
         if (userRes.rows.length === 0) {
             return res.status(404).json({ success: false, message: "Користувача не знайдено" });
@@ -80,12 +128,14 @@ router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
 
         const currentRole = userRes.rows[0].role;
 
-        // Якщо намагаються понизити останнього адміна — заборонити
+        // Не дозволяємо понизити останнього адміна
         if (currentRole === "admin" && role !== "admin") {
             const adminsCountRes = await pool.query("SELECT COUNT(*) FROM users WHERE role = 'admin'");
             const adminsCount = Number(adminsCountRes.rows[0].count || 0);
             if (adminsCount <= 1) {
-                return res.status(400).json({ success: false, message: "Неможливо понизити останнього адміністратора" });
+                return res
+                    .status(400)
+                    .json({ success: false, message: "Неможливо понизити останнього адміністратора" });
             }
         }
 
@@ -102,17 +152,18 @@ router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
     }
 });
 
-// 🔹 Отримати всі сертифікати
+/* ============================================================
+   🔹 4. Отримати всі сертифікати
+============================================================ */
 router.get("/certificates", authMiddleware, isAdmin, async (req, res) => {
     try {
         const query = `
             SELECT
                 c.*,
-                -- Повертаємо master user як JSON-об'єкт (якщо є), але зберігаємо legacy-поля для backward-compat
                 json_build_object(
-                  'id', u.id,
-                  'name', COALESCE(u.first_name || ' ' || u.last_name, c.user_name),
-                  'email', COALESCE(u.email, c.user_email, '-')
+                        'id', u.id,
+                        'name', COALESCE(u.first_name || ' ' || u.last_name, c.user_name),
+                        'email', COALESCE(u.email, c.user_email, '-')
                 ) AS "user",
                 COALESCE(t.title_ua, c.course) AS test_title
             FROM certificates c
@@ -128,7 +179,9 @@ router.get("/certificates", authMiddleware, isAdmin, async (req, res) => {
     }
 });
 
-// 🔹 Видалити сертифікат
+/* ============================================================
+   🔹 5. Видалити сертифікат
+============================================================ */
 router.delete("/certificates/:id", authMiddleware, isAdmin, async (req, res) => {
     try {
         const { id } = req.params;
@@ -139,11 +192,12 @@ router.delete("/certificates/:id", authMiddleware, isAdmin, async (req, res) => 
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
-// 🔹 Отримати аналітику
-// 🔹 Отримати аналітику (оновлено)
+
+/* ============================================================
+   🔹 6. Аналітика (враховує архів платежів)
+============================================================ */
 router.get("/stats", authMiddleware, isAdmin, async (req, res) => {
     try {
-        // Основна статистика
         const [users, tests, certs] = await Promise.all([
             pool.query("SELECT COUNT(*) FROM users"),
             pool.query("SELECT COUNT(*) FROM tests"),
@@ -152,7 +206,7 @@ router.get("/stats", authMiddleware, isAdmin, async (req, res) => {
 
         const avgPercent = await pool.query("SELECT AVG(percent) FROM certificates");
 
-        // Кількість сертифікатів по тестах
+        // Сертифікати по тестах
         const certsByTest = await pool.query(`
             SELECT t.title_ua AS test, COUNT(c.id) AS count
             FROM certificates c
@@ -161,7 +215,7 @@ router.get("/stats", authMiddleware, isAdmin, async (req, res) => {
             ORDER BY count DESC;
         `);
 
-        // 📈 Користувачі по місяцях (за останній рік)
+        // Користувачі по місяцях
         const usersByMonth = await pool.query(`
             SELECT TO_CHAR(created_at, 'YYYY-MM') AS month, COUNT(*) AS count
             FROM users
@@ -170,6 +224,15 @@ router.get("/stats", authMiddleware, isAdmin, async (req, res) => {
             ORDER BY month ASC;
         `);
 
+        // 🔹 Загальна виручка з урахуванням архіву
+        const paymentsTotal = await pool.query(`
+      SELECT SUM(amount_usd)::float AS total_usd FROM (
+        SELECT amount_cents / 100.0 AS amount_usd FROM payments
+        UNION ALL
+        SELECT amount_usd FROM payment_archive
+      ) AS all_payments;
+    `);
+
         res.json({
             success: true,
             stats: {
@@ -177,6 +240,7 @@ router.get("/stats", authMiddleware, isAdmin, async (req, res) => {
                 tests: Number(tests.rows[0].count),
                 certificates: Number(certs.rows[0].count),
                 avg_percent: Math.round(avgPercent.rows[0].avg || 0),
+                payments_total: Number(paymentsTotal.rows[0].total_usd || 0),
                 certs_by_test: certsByTest.rows,
                 users_by_month: usersByMonth.rows,
             },
@@ -186,6 +250,5 @@ router.get("/stats", authMiddleware, isAdmin, async (req, res) => {
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
-
 
 export default router;
