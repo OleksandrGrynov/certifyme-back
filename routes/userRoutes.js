@@ -10,6 +10,8 @@ import {
     forgotPassword,
     resetPassword,
 } from "../controllers/userController.js";
+import authMiddleware from "../middleware/authMiddleware.js";
+import { pool } from "../config/db.js";
 
 const router = express.Router();
 
@@ -25,5 +27,10 @@ router.put("/password", changePassword);       // зміна пароля (в п
 router.post("/set-password", setPassword);     // створення після Google
 router.post("/forgot-password", forgotPassword); // лист для відновлення
 router.post("/reset-password", resetPassword);   // новий пароль після листа
+
+
+
+
+
 
 export default router;
