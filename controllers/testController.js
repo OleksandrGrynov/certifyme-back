@@ -98,28 +98,48 @@ export const createTest = async (req, res) => {
     }
 };
 
-// 📘 Отримати тест з питаннями
+// 📘 Отримати тест з усіма мовами (для адмінки)
 export const getTestById = async (req, res) => {
     try {
         const { id } = req.params;
-        const testRes = await pool.query("SELECT * FROM tests WHERE id = $1", [id]);
+
+        const testRes = await pool.query(
+            `SELECT id, title_ua, title_en, description_ua, description_en, image_url, price_cents, currency 
+       FROM tests WHERE id = $1`,
+            [id]
+        );
 
         if (testRes.rows.length === 0)
             return res.status(404).json({ success: false, message: "Test not found" });
 
         const test = testRes.rows[0];
+
+        // Завантажуємо питання для обох мов
         const questionsRes = await pool.query(
-            "SELECT * FROM questions WHERE test_id = $1 ORDER BY id ASC",
+            `SELECT id, question_ua, question_en FROM questions WHERE test_id = $1 ORDER BY id ASC`,
             [id]
         );
 
         const questions = [];
+
         for (const q of questionsRes.rows) {
             const answersRes = await pool.query(
-                "SELECT * FROM answers WHERE question_id = $1 ORDER BY id ASC",
+                `SELECT id, answer_ua, answer_en, is_correct 
+         FROM answers WHERE question_id = $1 ORDER BY id ASC`,
                 [q.id]
             );
-            questions.push({ ...q, answers: answersRes.rows });
+
+            questions.push({
+                id: q.id,
+                question_ua: q.question_ua,
+                question_en: q.question_en,
+                answers: answersRes.rows.map(a => ({
+                    id: a.id,
+                    answer_ua: a.answer_ua,
+                    answer_en: a.answer_en,
+                    is_correct: a.is_correct,
+                })),
+            });
         }
 
         res.json({ success: true, test: { ...test, questions } });
@@ -129,7 +149,8 @@ export const getTestById = async (req, res) => {
     }
 };
 
-// 🧾 Генерація красивого сертифіката з QR-кодом
+
+
 // 🧾 Генерація сертифіката з QR-кодом і двома мовами
 export const generateCertificate = async (req, res) => {
     try {
@@ -292,6 +313,21 @@ export const generateCertificate = async (req, res) => {
     }
 };
 
+// 📈 Динамічний курс USD → UAH з API НБУ
+async function getUsdToUahRate() {
+    try {
+        const res = await axios.get(
+            "https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?valcode=USD&json"
+        );
+        const rate = res.data?.[0]?.rate;
+        console.log("💵 Курс НБУ USD→UAH:", rate);
+        return rate || 42;
+    } catch (err) {
+        console.error("⚠️ Не вдалося отримати курс НБУ:", err.message);
+        return 42; // fallback
+    }
+}
+
 
 // 🗑️ Видалити тест
 export const deleteTest = async (req, res) => {
@@ -314,25 +350,25 @@ export const deleteTest = async (req, res) => {
 export const getAllTests = async (req, res) => {
     try {
         const lang = req.query.lang === "en" ? "en" : "ua";
+        const rate = await getUsdToUahRate();
 
-        // Вибираємо потрібні колонки залежно від мови
         const titleField = lang === "en" ? "title_en" : "title_ua";
         const descField = lang === "en" ? "description_en" : "description_ua";
 
-        const result = await pool.query(
-            `
-            SELECT 
-                id,
-                ${titleField} AS title,
-                ${descField} AS description,
-                image_url,
-                created_at
-            FROM tests
-            ORDER BY id ASC
-            `
-        );
+        const result = await pool.query(`
+      SELECT id, ${titleField} AS title, ${descField} AS description,
+             image_url, price_cents, currency, created_at
+      FROM tests
+      ORDER BY id ASC
+    `);
 
-        res.json({ success: true, tests: result.rows, lang });
+        // 💰 додаємо поле для відображення ціни в гривнях
+        const tests = result.rows.map(t => ({
+            ...t,
+            price_uah: Math.round((t.price_cents / 100) * rate),
+        }));
+
+        res.json({ success: true, tests, lang, rate });
     } catch (err) {
         console.error("❌ getAllTests error:", err);
         res.status(500).json({ success: false, message: "Server error" });
@@ -340,34 +376,71 @@ export const getAllTests = async (req, res) => {
 };
 
 
+
 // ✏️ Оновити тест
 export const updateTest = async (req, res) => {
     try {
         const { id } = req.params;
-        const { title_ua, title_en, description_ua, description_en, image_url } = req.body;
+        const {
+            title_ua,
+            title_en,
+            description_ua,
+            description_en,
+            image_url,
+            price_amount,
+            currency,
+        } = req.body;
+
+        // 🔹 Підвантажуємо курс з НБУ
+        const rate = await getUsdToUahRate();
 
         const tUa = title_ua || "Без назви";
         const tEn = title_en || tUa;
         const dUa = description_ua || "";
         const dEn = description_en || dUa;
 
+        let newCurrency = (currency || "usd").toLowerCase();
+        let priceCents = 0;
+
+        // 💵 Конвертація ціни
+        if (!isNaN(price_amount)) {
+            if (newCurrency === "usd") {
+                // якщо ціна в доларах
+                priceCents = Math.round(price_amount * 100);
+            } else if (newCurrency === "uah") {
+                // якщо ціна в гривнях → переводимо в USD і зберігаємо у центах
+                const usdValue = price_amount / rate;
+                priceCents = Math.round(usdValue * 100);
+                newCurrency = "usd"; // у БД зберігаємо тільки USD
+            }
+        }
+
+        // 🧩 Оновлення тесту
         const result = await pool.query(
             `UPDATE tests
-             SET title_ua=$1, title_en=$2, description_ua=$3, description_en=$4, image_url=$5
-             WHERE id=$6
-                 RETURNING *`,
-            [tUa, tEn, dUa, dEn, image_url, id]
+             SET title_ua=$1, title_en=$2, description_ua=$3, description_en=$4,
+                 image_url=$5, price_cents=$6, currency=$7
+             WHERE id=$8 RETURNING *`,
+            [tUa, tEn, dUa, dEn, image_url, priceCents, "usd", id]
         );
 
         if (result.rows.length === 0)
-            return res.status(404).json({ success: false, message: "❌ Тест не знайдено" });
+            return res
+                .status(404)
+                .json({ success: false, message: "❌ Тест не знайдено" });
 
-        res.json({ success: true, message: "✅ Тест оновлено", test: result.rows[0] });
+        res.json({
+            success: true,
+            message: "✅ Тест оновлено",
+            test: result.rows[0],
+        });
     } catch (err) {
         console.error("❌ updateTest error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
+
+
 
 // 📜 Перевірка сертифіката за QR-кодом
 export const verifyCertificate = async (req, res) => {
