@@ -25,7 +25,7 @@ async function sendOtpEmail(email, otp) {
 
     try {
         const response = await resend.emails.send({
-            from: "CertifyMe <onboarding@resend.dev>",
+            from: process.env.EMAIL_FROM,
             to: email,
             subject: "Код підтвердження | CertifyMe",
             html,
