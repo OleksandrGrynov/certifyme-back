@@ -4,7 +4,6 @@ import authMiddleware, { isAdmin } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-/* -------------------- 📊 ЗАГАЛЬНА АНАЛІТИКА -------------------- */
 router.get("/analytics/overview", authMiddleware, isAdmin, async (req, res) => {
     try {
         const [users, tests, certs, avgScore, payments] = await Promise.all([
@@ -40,7 +39,6 @@ router.get("/analytics/overview", authMiddleware, isAdmin, async (req, res) => {
     }
 });
 
-/* -------------------- 📈 КОРИСТУВАЧІ ПО ДНЯХ -------------------- */
 router.get("/analytics/daily-users", authMiddleware, isAdmin, async (req, res) => {
     try {
         const days = parseInt(req.query.days || "30");
@@ -58,7 +56,6 @@ router.get("/analytics/daily-users", authMiddleware, isAdmin, async (req, res) =
     }
 });
 
-/* -------------------- 💳 ОПЛАТИ ПО ДНЯХ -------------------- */
 router.get("/analytics/payments-daily", authMiddleware, isAdmin, async (req, res) => {
     try {
         const days = parseInt(req.query.days || "30");
@@ -78,7 +75,6 @@ router.get("/analytics/payments-daily", authMiddleware, isAdmin, async (req, res
     }
 });
 
-/* -------------------- 🧾 ТОП ТЕСТІВ -------------------- */
 router.get("/analytics/top-tests", authMiddleware, isAdmin, async (req, res) => {
     try {
         const lang = req.query.lang === "en" ? "en" : "ua";
@@ -104,8 +100,6 @@ router.get("/analytics/top-tests", authMiddleware, isAdmin, async (req, res) => 
     }
 });
 
-
-/* -------------------- 👑 ТОП КОРИСТУВАЧІ -------------------- */
 router.get("/analytics/top-users", authMiddleware, isAdmin, async (req, res) => {
     try {
         const result = await pool.query(`
