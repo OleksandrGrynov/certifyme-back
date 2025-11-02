@@ -9,10 +9,8 @@ export async function generateCertificatePDF(certId) {
 
     const certFile = path.join(certFolder, `certificate_${certId}.pdf`);
 
-    // 🔹 Якщо вже існує, повертаємо одразу
     if (fs.existsSync(certFile)) return certFile;
 
-    // Отримуємо дані з БД
     const { rows } = await pool.query(
         `SELECT c.*, u.name AS user_name, u.surname AS user_surname, t.title_ua, t.title_en 
          FROM certificates c
@@ -25,7 +23,6 @@ export async function generateCertificatePDF(certId) {
     if (!rows.length) throw new Error("Certificate not found in DB");
     const cert = rows[0];
 
-    // Генерація PDF
     const doc = new PDFDocument({ size: "A4", margin: 50 });
     doc.pipe(fs.createWriteStream(certFile));
 
