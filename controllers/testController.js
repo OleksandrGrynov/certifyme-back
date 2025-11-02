@@ -104,8 +104,8 @@ export const getTestById = async (req, res) => {
         const { id } = req.params;
 
         const testRes = await pool.query(
-            `SELECT id, title_ua, title_en, description_ua, description_en, image_url, price_cents, currency 
-       FROM tests WHERE id = $1`,
+            `SELECT id, title_ua, title_en, description_ua, description_en, image_url, price_cents, currency
+             FROM tests WHERE id = $1`,
             [id]
         );
 
@@ -124,8 +124,8 @@ export const getTestById = async (req, res) => {
 
         for (const q of questionsRes.rows) {
             const answersRes = await pool.query(
-                `SELECT id, answer_ua, answer_en, is_correct 
-         FROM answers WHERE question_id = $1 ORDER BY id ASC`,
+                `SELECT id, answer_ua, answer_en, is_correct
+                 FROM answers WHERE question_id = $1 ORDER BY id ASC`,
                 [q.id]
             );
 
@@ -356,11 +356,11 @@ export const getAllTests = async (req, res) => {
         const descField = lang === "en" ? "description_en" : "description_ua";
 
         const result = await pool.query(`
-      SELECT id, ${titleField} AS title, ${descField} AS description,
-             image_url, price_cents, currency, created_at
-      FROM tests
-      ORDER BY id ASC
-    `);
+            SELECT id, ${titleField} AS title, ${descField} AS description,
+                   image_url, price_cents, currency, created_at
+            FROM tests
+            ORDER BY id ASC
+        `);
 
         // 💰 додаємо поле для відображення ціни в гривнях
         const tests = result.rows.map(t => ({
@@ -449,7 +449,7 @@ export const verifyCertificate = async (req, res) => {
         const result = await pool.query(
             `SELECT c.*, json_build_object('id', u.id, 'name', COALESCE(u.first_name || ' ' || u.last_name, c.user_name), 'email', COALESCE(u.email, c.user_email, '-')) AS "user"
              FROM certificates c
-             LEFT JOIN users u ON u.id = c.user_id
+                      LEFT JOIN users u ON u.id = c.user_id
              WHERE c.cert_id = $1`,
             [cert_id]
         );
