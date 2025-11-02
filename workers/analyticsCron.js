@@ -2,8 +2,6 @@ import cron from 'node-cron';
 import { pool } from '../config/db.js';
 
 async function computeDailyFor(date) {
-  // date is a Date or date-string for which we compute metrics (usually yesterday)
-  // We'll compute counts and upsert into analytics_daily
   const q = `
     INSERT INTO analytics_daily (date, registrations, tests, avg_score, certificates, pass_rate, created_at)
     SELECT
@@ -26,7 +24,6 @@ async function computeDailyFor(date) {
   await pool.query(q, [date]);
 }
 
-// schedule daily at 00:05 server time
 cron.schedule('5 0 * * *', async () => {
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
@@ -40,8 +37,6 @@ cron.schedule('5 0 * * *', async () => {
   }
 });
 
-// Allow running the job manually
 export async function runOnce(dateStr) {
   await computeDailyFor(dateStr);
 }
-
