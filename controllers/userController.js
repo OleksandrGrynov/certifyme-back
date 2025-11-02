@@ -437,3 +437,58 @@ export const resetPassword = async (req, res) => {
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
+// ======================================================
+// 🧾 Grant access to test (force success stub mode)
+// ======================================================
+export const grantUserTest = async (req, res) => {
+    try {
+        const { testId } = req.body;
+        const userId = req.user?.id;
+
+        if (!userId || !testId) {
+            return res.status(400).json({ success: false, message: "Missing data" });
+        }
+
+        console.log("💳 FORCED grantUserTest:", { userId, testId });
+
+        // 💥 Примусово ставимо всі платежі succeeded
+        await pool.query(
+            `UPDATE payments
+       SET status = 'succeeded'
+       WHERE user_id = $1 AND test_id = $2`,
+            [userId, testId]
+        );
+
+        // 💾 Якщо платежу взагалі не було — створюємо новий успішний
+        const check = await pool.query(
+            `SELECT id FROM payments WHERE user_id=$1 AND test_id=$2`,
+            [userId, testId]
+        );
+
+        if (check.rows.length === 0) {
+            await pool.query(
+                `INSERT INTO payments (user_id, test_id, amount_cents, currency, status, created_at)
+                 VALUES ($1, $2, 1000, 'usd', 'succeeded', NOW())`,
+                [userId, testId]
+            );
+            console.log(`✅ Created forced payment record for user ${userId}, test ${testId}`);
+        } else {
+            console.log(`✅ Forced updated existing payment(s) to succeeded`);
+        }
+
+        // ✅ Відкриваємо доступ до тесту
+        await pool.query(
+            `INSERT INTO user_tests (user_id, test_id, is_unlocked)
+             VALUES ($1, $2, true)
+                 ON CONFLICT (user_id, test_id)
+       DO UPDATE SET is_unlocked = true`,
+            [userId, testId]
+        );
+
+        console.log(`🚀 Test #${testId} forcibly unlocked for user #${userId}`);
+        res.json({ success: true, message: "✅ Payment forced to succeeded, test unlocked" });
+    } catch (err) {
+        console.error("❌ grantUserTest error:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
