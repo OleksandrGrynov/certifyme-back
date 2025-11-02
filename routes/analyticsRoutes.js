@@ -4,11 +4,6 @@ import authMiddleware from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-/*
-  Користувацька аналітика (доступна після логіну)
-*/
-
-// --- 1. User overview ---
 router.get("/user/overview", authMiddleware, async (req, res) => {
     try {
         const userId = req.user.id;
@@ -48,7 +43,6 @@ router.get("/user/overview", authMiddleware, async (req, res) => {
     }
 });
 
-// --- 2. User daily ---
 router.get("/user/daily", authMiddleware, async (req, res) => {
     const { days = 30 } = req.query;
     const userId = req.user.id;
@@ -66,7 +60,6 @@ router.get("/user/daily", authMiddleware, async (req, res) => {
     }
 });
 
-// --- 3. User top-courses ---
 router.get("/user/top-courses", authMiddleware, async (req, res) => {
     const { limit = 10 } = req.query;
     const userId = req.user.id;
@@ -87,7 +80,6 @@ router.get("/user/top-courses", authMiddleware, async (req, res) => {
     }
 });
 
-// --- 4. User recent ---
 router.get("/user/recent", authMiddleware, async (req, res) => {
     const { limit = 20 } = req.query;
     const userId = req.user.id;
