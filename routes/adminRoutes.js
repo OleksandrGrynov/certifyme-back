@@ -4,9 +4,6 @@ import authMiddleware, { isAdmin } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-/* ============================================================
-   🔹 1. Отримати всіх користувачів
-============================================================ */
 router.get("/users", authMiddleware, isAdmin, async (req, res) => {
     try {
         const result = await pool.query(`
@@ -26,15 +23,11 @@ router.get("/users", authMiddleware, isAdmin, async (req, res) => {
     }
 });
 
-/* ============================================================
-   🔹 2. Видалити користувача (з архівацією платежів)
-============================================================ */
 router.delete("/users/:id", authMiddleware, isAdmin, async (req, res) => {
     const client = await pool.connect();
     try {
         const { id } = req.params;
 
-        // 🧩 Перевірити чи існує користувач
         const userRes = await client.query(
             "SELECT first_name, last_name, email, role FROM users WHERE id = $1",
             [id]
@@ -52,7 +45,6 @@ router.delete("/users/:id", authMiddleware, isAdmin, async (req, res) => {
 
         await client.query("BEGIN");
 
-        // 🏦 1️⃣ Архівуємо платежі користувача перед видаленням
         await client.query(`
       CREATE TABLE IF NOT EXISTS payment_archive (
         id SERIAL PRIMARY KEY,
@@ -83,13 +75,11 @@ router.delete("/users/:id", authMiddleware, isAdmin, async (req, res) => {
             );
         }
 
-        // 🧹 2️⃣ Видаляємо пов’язані записи
         await client.query("DELETE FROM certificates WHERE user_id = $1", [id]);
         await client.query("DELETE FROM user_achievements WHERE user_id = $1", [id]);
         await client.query("DELETE FROM user_tests WHERE user_id = $1", [id]);
         await client.query("DELETE FROM payments WHERE user_id = $1", [id]);
 
-        // 🧍 3️⃣ Видаляємо самого користувача
         await client.query("DELETE FROM users WHERE id = $1", [id]);
 
         await client.query("COMMIT");
@@ -107,9 +97,6 @@ router.delete("/users/:id", authMiddleware, isAdmin, async (req, res) => {
     }
 });
 
-/* ============================================================
-   🔹 3. Оновити роль користувача
-============================================================ */
 router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
     try {
         const { id } = req.params;
@@ -120,7 +107,6 @@ router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
             return res.status(400).json({ success: false, message: "Invalid role" });
         }
 
-        // Перевірка існування користувача
         const userRes = await pool.query("SELECT id, role FROM users WHERE id = $1", [id]);
         if (userRes.rows.length === 0) {
             return res.status(404).json({ success: false, message: "Користувача не знайдено" });
@@ -128,7 +114,6 @@ router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
 
         const currentRole = userRes.rows[0].role;
 
-        // Не дозволяємо понизити останнього адміна
         if (currentRole === "admin" && role !== "admin") {
             const adminsCountRes = await pool.query("SELECT COUNT(*) FROM users WHERE role = 'admin'");
             const adminsCount = Number(adminsCountRes.rows[0].count || 0);
@@ -139,7 +124,6 @@ router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
             }
         }
 
-        // Оновлюємо роль
         const updated = await pool.query(
             `UPDATE users SET role = $1 WHERE id = $2 RETURNING id, first_name, last_name, email, role, created_at`,
             [role, id]
@@ -152,9 +136,6 @@ router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
     }
 });
 
-/* ============================================================
-   🔹 4. Отримати всі сертифікати
-============================================================ */
 router.get("/certificates", authMiddleware, isAdmin, async (req, res) => {
     try {
         const query = `
@@ -179,9 +160,7 @@ router.get("/certificates", authMiddleware, isAdmin, async (req, res) => {
     }
 });
 
-/* ============================================================
-   🔹 5. Видалити сертифікат
-============================================================ */
+
 router.delete("/certificates/:id", authMiddleware, isAdmin, async (req, res) => {
     try {
         const { id } = req.params;
@@ -193,9 +172,6 @@ router.delete("/certificates/:id", authMiddleware, isAdmin, async (req, res) => 
     }
 });
 
-/* ============================================================
-   🔹 6. Аналітика (враховує архів платежів)
-============================================================ */
 router.get("/stats", authMiddleware, isAdmin, async (req, res) => {
     try {
         const [users, tests, certs] = await Promise.all([
@@ -206,7 +182,6 @@ router.get("/stats", authMiddleware, isAdmin, async (req, res) => {
 
         const avgPercent = await pool.query("SELECT AVG(percent) FROM certificates");
 
-        // Сертифікати по тестах
         const certsByTest = await pool.query(`
             SELECT t.title_ua AS test, COUNT(c.id) AS count
             FROM certificates c
@@ -215,7 +190,6 @@ router.get("/stats", authMiddleware, isAdmin, async (req, res) => {
             ORDER BY count DESC;
         `);
 
-        // Користувачі по місяцях
         const usersByMonth = await pool.query(`
             SELECT TO_CHAR(created_at, 'YYYY-MM') AS month, COUNT(*) AS count
             FROM users
@@ -224,7 +198,6 @@ router.get("/stats", authMiddleware, isAdmin, async (req, res) => {
             ORDER BY month ASC;
         `);
 
-        // 🔹 Загальна виручка з урахуванням архіву
         const paymentsTotal = await pool.query(`
       SELECT SUM(amount_usd)::float AS total_usd FROM (
         SELECT amount_cents / 100.0 AS amount_usd FROM payments
