@@ -24,12 +24,10 @@ dotenv.config();
 
 const app = express();
 
-// 🌐 Основні middleware
 app.use(cors({ origin: "http://localhost:5173", credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
 
-// 🔹 Маршрути
 app.use("/api/auth", googleAuthRoutes);
 app.use("/api/tests", testRoutes);
 app.use("/api/users", userRoutes);
@@ -41,16 +39,14 @@ app.use("/api/achievements", achievementRoutes);
 app.use("/api/auth", emailRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/analytics", analyticsRoutes);
-app.use("/api/payments", paymentRoutes); // ✅ Stripe без webhook
+app.use("/api/payments", paymentRoutes);
 app.use("/api/user", userTestsRoutes);
 app.use("/certificates", express.static(path.join(process.cwd(), "certificates")));
 app.use("/api/certificates", certificateRoutes);
 
-// 🔍 Health-check endpoint
 app.get("/", (req, res) => {
     res.send("🎓 CertifyMe API running (local mode, no webhook)");
 });
 
-// 🚀 Запуск сервера
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
