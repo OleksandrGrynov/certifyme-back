@@ -9,7 +9,7 @@ async function sendTestEmail() {
     try {
         const data = await resend.emails.send({
             from: process.env.EMAIL_FROM,
-            to: "alex170707228@gmail.com", // твоя тестова пошта
+            to: "alex170707228@gmail.com",
             subject: "✅ Перевірка Resend",
             html: "<p>Привіт! Це тестовий лист від CertifyMe 💚</p>",
         });
