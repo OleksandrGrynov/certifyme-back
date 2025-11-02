@@ -1,12 +1,17 @@
+// routes/paymentRoutes.js
 import express from "express";
-import { createCheckoutSession } from "../controllers/paymentController.js";
 import authMiddleware from "../middleware/authMiddleware.js";
+import {
+    createCheckoutSession,
+    confirmLocalPayment,
+} from "../controllers/paymentController.js";
 
 const router = express.Router();
 
-// 💰 Створення Stripe Checkout Session
+// 💰 Stripe checkout
 router.post("/checkout", authMiddleware, createCheckoutSession);
 
-// ❌ Webhook більше не тут — він тепер у server.js перед express.json()
+// 💸 Локальне підтвердження після повернення з Stripe
+router.post("/confirm-local", authMiddleware, confirmLocalPayment);
 
 export default router;
