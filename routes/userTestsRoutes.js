@@ -4,10 +4,6 @@ import { pool } from "../config/db.js";
 
 const router = express.Router();
 
-/**
- * ✅ Отримати всі тести користувача
- *    Повертає масив testId
- */
 router.get("/tests", authMiddleware, async (req, res) => {
     try {
         const { rows } = await pool.query(
@@ -21,9 +17,6 @@ router.get("/tests", authMiddleware, async (req, res) => {
     }
 });
 
-/**
- * ✅ Перевірити доступ до конкретного тесту
- */
 router.get("/tests/check/:testId", authMiddleware, async (req, res) => {
     try {
         const { testId } = req.params;
@@ -38,10 +31,6 @@ router.get("/tests/check/:testId", authMiddleware, async (req, res) => {
     }
 });
 
-/**
- * ✅ Надати доступ користувачу до тесту (після оплати)
- *    Викликається фронтом при `?paid=true`
- */
 router.post("/tests/grant", authMiddleware, async (req, res) => {
     try {
         const { testId } = req.body;
