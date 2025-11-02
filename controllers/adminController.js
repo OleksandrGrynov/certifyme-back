@@ -49,3 +49,38 @@ export const deleteUser = async (req, res) => {
         client.release();
     }
 };
+// 🔹 Отримати всі сертифікати (для адмін-панелі)
+export const getAllCertificates = async (req, res) => {
+    try {
+        const lang = req.query.lang || "ua";
+
+        const query = `
+            SELECT c.id, c.user_id, c.test_id, c.percent, c.issued, c.expires,
+                   u.first_name || ' ' || u.last_name AS user_name, 
+                   u.email AS user_email,
+                   t.title_ua AS test_title_ua, t.title_en AS test_title_en
+            FROM certificates c
+            JOIN users u ON c.user_id = u.id
+            JOIN tests t ON c.test_id = t.id
+            ORDER BY c.id DESC
+        `;
+
+        const result = await pool.query(query);
+        res.json({ success: true, certificates: result.rows });
+    } catch (err) {
+        console.error("❌ getAllCertificates error:", err);
+        res.status(500).json({ success: false, message: "Server error while loading certificates" });
+    }
+};
+
+// 🔹 Видалити сертифікат
+export const deleteCertificate = async (req, res) => {
+    try {
+        const { id } = req.params;
+        await pool.query("DELETE FROM certificates WHERE id = $1", [id]);
+        res.json({ success: true, message: "Certificate deleted" });
+    } catch (err) {
+        console.error("❌ deleteCertificate error:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
