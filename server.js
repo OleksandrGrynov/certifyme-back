@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import { pool } from "./config/db.js";
+import authMiddleware, { isAdmin } from "./middleware/authMiddleware.js";
 
 import achievementRoutes from "./routes/achievementRoutes.js";
 import googleAuthRoutes from "./routes/googleAuthRoutes.js";
@@ -18,6 +19,9 @@ import analyticsRoutes from "./routes/analyticsRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
 import userTestsRoutes from "./routes/userTestsRoutes.js";
 import certificateRoutes from "./routes/certificateRoutes.js";
+import adminAchievementsRouter from "./routes/adminAchievements.js";
+import smsRoutes from "./routes/smsRoutes.js";
+
 import path from "path";
 
 dotenv.config();
@@ -43,7 +47,8 @@ app.use("/api/payments", paymentRoutes);
 app.use("/api/user", userTestsRoutes);
 app.use("/certificates", express.static(path.join(process.cwd(), "certificates")));
 app.use("/api/certificates", certificateRoutes);
-
+app.use("/api/admin/achievements", authMiddleware, isAdmin, adminAchievementsRouter);
+app.use("/api/sms", smsRoutes);
 app.get("/", (req, res) => {
     res.send("🎓 CertifyMe API running (local mode, no webhook)");
 });
