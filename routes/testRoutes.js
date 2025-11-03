@@ -1,7 +1,8 @@
 import express from "express";
 import {
     createTest, getAllTests, deleteTest, updateTest,
-    getTestById, generateCertificate, verifyCertificate
+    getTestById, generateCertificate, verifyCertificate,saveTestResult,getUserPassedTests
+
 } from "../controllers/testController.js";
 import authMiddleware, { isAdmin } from "../middleware/authMiddleware.js";
 import { explainOneQuestion } from "../controllers/explanationController.js";
@@ -20,7 +21,8 @@ router.put("/:id", authMiddleware, isAdmin, updateTest);
 router.delete("/:id", authMiddleware, isAdmin, deleteTest);
 
 router.post("/certificate", authMiddleware, generateCertificate);
-
+router.post("/record", authMiddleware, saveTestResult);
+router.get("/user/passed", authMiddleware, getUserPassedTests);
 router.post("/explain-one", explainOneQuestion);
 router.put("/:id/questions", authMiddleware, isAdmin, async (req, res) => {
     const {id} = req.params;
