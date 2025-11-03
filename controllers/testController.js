@@ -5,7 +5,7 @@ import fs from "fs";
 import path from "path";
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
-
+import { checkAchievements } from "../utils/achievementEngine.js";
 // 🌍 Автоматичний переклад через безкоштовний Google Translate API
 async function translateText(text, from = "uk", to = "en") {
     if (!text || !text.trim()) return text;
@@ -169,7 +169,7 @@ export const generateCertificate = async (req, res) => {
 
         const { test_id, test_title, score, total } = req.body;
 
-        // ✅ Якщо test_id переданий — знайдемо назви курсу в БД
+        // ✅ Знаходимо назву тесту
         let course_ua = test_title;
         let course_en = test_title;
         if (test_id) {
@@ -185,6 +185,22 @@ export const generateCertificate = async (req, res) => {
 
         const fullName = `${userRes.rows[0].first_name} ${userRes.rows[0].last_name}`;
         const percent = Math.round((score / total) * 100);
+
+        // ✅ 1. Спочатку перевіримо, чи вже є сертифікат
+        const existingCert = await pool.query(
+            `SELECT * FROM certificates WHERE user_id = $1 AND test_id = $2 LIMIT 1`,
+            [decoded.id, test_id]
+        );
+
+        if (existingCert.rows.length > 0) {
+            const filePath = path.join("certificates", `certificate_${existingCert.rows[0].cert_id}.pdf`);
+            if (fs.existsSync(filePath)) {
+                console.log("📄 Returning existing certificate:", filePath);
+                return res.download(filePath);
+            }
+        }
+
+        // ✅ 2. Генеруємо новий сертифікат
         const certId = `C-UA-${Math.floor(100000 + Math.random() * 900000)}`;
         const issued = new Date();
         const expires = new Date();
@@ -269,34 +285,35 @@ export const generateCertificate = async (req, res) => {
         const RIGHT_X = PAGE_W - MARGIN - 220;
 
         doc.fontSize(12).fillColor("#000")
-            .text(`Виданий: ${issued.toLocaleDateString("uk-UA")}`, LEFT_X, PAGE_H - MARGIN - 180)
-            .text(`Діє до: ${expires.toLocaleDateString("uk-UA")}`, RIGHT_X, PAGE_H - MARGIN - 180);
+            .text(`Виданий: ${issued.toLocaleDateString("uk-UA")}`, LEFT_X, PAGE_H - MARGIN - 160)
+            .text(`Діє до: ${expires.toLocaleDateString("uk-UA")}`, RIGHT_X, PAGE_H - MARGIN - 160);
 
-        doc.text("__________________", LEFT_X, PAGE_H - MARGIN - 130);
-        doc.text("Підпис викладача", LEFT_X + 5, PAGE_H - MARGIN - 112);
+        doc.text("__________________", LEFT_X, PAGE_H - MARGIN - 110);
+        doc.text("Підпис викладача", LEFT_X + 5, PAGE_H - MARGIN - 92);
 
         if (fs.existsSync(stampPath)) {
-            doc.image(stampPath, RIGHT_X, PAGE_H - MARGIN - 142, { width: 96 });
+            doc.image(stampPath, RIGHT_X, PAGE_H - MARGIN - 120, { width: 96 });
         }
 
-        // === QR-код ===
-        const QR_W = 126;
+        // === QR-код (піднято трохи вище, щоб не створювало другу сторінку) ===
+        const QR_W = 110;
         const QR_X = PAGE_W - MARGIN - QR_W;
-        const QR_Y = PAGE_H - MARGIN - QR_W - 40;
+        const QR_Y = PAGE_H - MARGIN - QR_W - 70;
 
         if (fs.existsSync(qrPath)) {
             doc.image(qrPath, QR_X, QR_Y, { width: QR_W });
             doc.fontSize(10).fillColor("#555")
-                .text("Перевірити сертифікат:", QR_X - 10, QR_Y + QR_W + 6, { width: QR_W + 20, align: "center" })
-                .text(verifyUrl, QR_X - 20, QR_Y + QR_W + 20, { width: QR_W + 40, align: "center" });
+                .text("Перевірити сертифікат:", QR_X - 10, QR_Y + QR_W + 4, { width: QR_W + 20, align: "center" })
+                .text(verifyUrl, QR_X - 20, QR_Y + QR_W + 18, { width: QR_W + 40, align: "center" });
         }
 
+        // === Футер (піднятий вище) ===
         doc.fontSize(10).fillColor("#00703C")
-            .text("CertifyMe © 2025", MARGIN, PAGE_H - MARGIN, { width: INNER_W, align: "right" });
+            .text("CertifyMe © 2025", MARGIN, PAGE_H - MARGIN - 10, { width: INNER_W, align: "right" });
 
         doc.end();
 
-        // === 🧾 Зберігаємо в БД обидві мови ===
+        // === 🧾 Запис у БД ===
         await pool.query(
             `INSERT INTO certificates (cert_id, user_id, user_name, course, course_en, test_id, issued, expires, percent)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
@@ -312,6 +329,7 @@ export const generateCertificate = async (req, res) => {
         });
     }
 };
+
 
 // 📈 Динамічний курс USD → UAH з API НБУ
 async function getUsdToUahRate() {
@@ -525,5 +543,93 @@ export const getUserCertificates = async (req, res) => {
             success: false,
             message: "Помилка при завантаженні сертифікатів",
         });
+    }
+};
+// 🧩 Збереження результату після проходження тесту
+export const saveTestResult = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { testId, score, total } = req.body;
+
+        if (!testId || score == null || total == null) {
+            return res
+                .status(400)
+                .json({ success: false, message: "Invalid test result data" });
+        }
+
+        const passed = score >= total * 0.6; // мінімум 60%
+
+        // 🧾 Зберігаємо історію проходження
+        await pool.query(
+            `INSERT INTO user_test_history (user_id, test_id, score, total, passed)
+       VALUES ($1, $2, $3, $4, $5)`,
+            [userId, testId, score, total, passed]
+        );
+
+        // 📊 Отримуємо поточну статистику користувача
+        const [testsRes, certsRes] = await Promise.all([
+            pool.query(
+                `SELECT COUNT(*) AS count FROM user_test_history WHERE user_id = $1 AND passed = true`,
+                [userId]
+            ),
+            pool.query(
+                `SELECT COUNT(*) AS count FROM certificates WHERE user_id = $1`,
+                [userId]
+            ),
+        ]);
+
+        const totalPassedTests = parseInt(testsRes.rows[0].count);
+        const totalCertificates = parseInt(certsRes.rows[0].count);
+        const averageScore = (score / total) * 100;
+
+        console.log(`📊 User ${userId}: tests=${totalPassedTests}, certs=${totalCertificates}, avgScore=${averageScore}`);
+
+        // 🏆 Перевіряємо досягнення
+        const newAchievements = await checkAchievements({
+            id: userId,
+            testsPassed: totalPassedTests,
+            certificates: totalCertificates,
+            score: averageScore,
+        });
+
+        if (newAchievements.length > 0) {
+            console.log(`🏅 ${newAchievements.length} new achievements for user ${userId}`);
+        } else {
+            console.log(`ℹ️ No new achievements for user ${userId}`);
+        }
+
+        // 🔁 Відповідь на фронт
+        res.json({
+            success: true,
+            newAchievements, // список нових досягнень (може бути порожнім)
+        });
+    } catch (err) {
+        console.error("❌ saveTestResult error:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+
+
+
+// 🧩 Отримати пройдені тести користувача
+export const getUserPassedTests = async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        const result = await pool.query(
+            `SELECT h.*, t.title_ua, t.title_en, t.image_url
+             FROM user_test_history h
+                      JOIN tests t ON h.test_id = t.id
+             WHERE h.user_id = $1
+             ORDER BY h.created_at DESC`,
+            [userId]
+        );
+
+
+        res.json({ success: true, tests: result.rows });
+    } catch (err) {
+        console.error("❌ getUserPassedTests:", err);
+        res.status(500).json({ success: false });
     }
 };
