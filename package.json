@@ -1,4 +1,4 @@
-{
+  {
   "name": "coursehub-back",
   "version": "1.0.0",
   "description": "",
@@ -10,7 +10,8 @@
     "worker": "node workers/analyticsCron.js",
     "strip:comments": "node scripts/strip-comments.js",
     "prisma:env": "node scripts/write-prisma-env.js",
-    "prisma:generate": "npm run prisma:env && prisma generate",
+    "prisma:generate": "prisma generate",
+    "prisma:deploy": "prisma migrate deploy",
     "prisma:migrate": "npm run prisma:env && prisma migrate dev --name init",
     "prisma:studio": "npm run prisma:env && prisma studio",
     "prisma:seed": "node prisma/seed.js"
