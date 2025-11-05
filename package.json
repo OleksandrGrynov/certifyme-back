@@ -2,17 +2,24 @@
   "name": "coursehub-back",
   "version": "1.0.0",
   "description": "",
+  "type": "module",
   "main": "index.js",
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
     "worker": "node workers/analyticsCron.js",
-    "strip:comments": "node scripts/strip-comments.js"
+    "strip:comments": "node scripts/strip-comments.js",
+    "prisma:env": "node scripts/write-prisma-env.js",
+    "prisma:generate": "npm run prisma:env && prisma generate",
+    "prisma:migrate": "npm run prisma:env && prisma migrate dev --name init",
+    "prisma:studio": "npm run prisma:env && prisma studio",
+    "prisma:seed": "node prisma/seed.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@prisma/client": "^6.2.1",
     "@vitalets/google-translate-api": "^9.2.1",
     "axios": "^1.12.2",
     "bcryptjs": "^3.0.2",
@@ -39,6 +46,7 @@
     "@babel/generator": "^7.26.2",
     "@babel/parser": "^7.26.2",
     "fast-glob": "^3.3.3",
-    "nodemon": "^3.1.10"
+    "nodemon": "^3.1.10",
+    "prisma": "^6.2.1"
   }
 }

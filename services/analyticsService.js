@@ -1,265 +1,484 @@
-import { pool } from '../config/db.js';
+// services/analyticsService.js
+import prisma from "../config/prisma.js";
 
+// ───────────────────────────────────────────────────────────────
+// Optional Redis (same behavior as before; safe if not configured)
+// ───────────────────────────────────────────────────────────────
 let redis = null;
-let redisInitialized = false;
+let redisReady = false;
 async function ensureRedis() {
-  if (redisInitialized) return;
-  redisInitialized = true;
-  if (!process.env.REDIS_URL) return;
+  if (redisReady) return;
+  redisReady = true;
+  const url = process.env.REDIS_URL;
+  if (!url) return;
   try {
-    const RedisMod = await import('ioredis');
-    redis = new RedisMod.default(process.env.REDIS_URL);
+    const { default: IORedis } = await import("ioredis");
+    redis = new IORedis(url);
   } catch (e) {
-    console.error('redis init error', e && e.message);
+    console.error("redis init error:", e?.message || e);
     redis = null;
   }
 }
+async function cacheGet(key) {
+  await ensureRedis();
+  if (!redis) return null;
+  try {
+    const raw = await redis.get(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    console.error("redis get error:", e?.message || e);
+    return null;
+  }
+}
+async function cacheSet(key, value, ttlSec) {
+  await ensureRedis();
+  if (!redis) return;
+  try {
+    await redis.set(key, JSON.stringify(value), "EX", ttlSec);
+  } catch (e) {
+    console.error("redis set error:", e?.message || e);
+  }
+}
 
-const OVERVIEW_KEY = 'analytics:overview';
-const DAILY_KEY = (days) => `analytics:daily:${days}`;
+// ───────────────────────────────────────────────────────────────
+// GLOBAL OVERVIEW (matches prior SQL logic)
+// ───────────────────────────────────────────────────────────────
+const OVERVIEW_KEY = "analytics:overview";
 
 export async function getOverview() {
-  // try cache
-  await ensureRedis();
-  if (redis) {
-    try {
-      const cached = await redis.get(OVERVIEW_KEY);
-      if (cached) return JSON.parse(cached);
-    } catch (e) {
-      console.error('redis read error', e.message);
-    }
-  }
+  const cached = await cacheGet(OVERVIEW_KEY);
+  if (cached) return cached;
 
-  // light realtime aggregation
-  const queries = [
-    pool.query('SELECT COUNT(*)::int AS total_users FROM users'),
-    pool.query("SELECT COUNT(DISTINCT user_id)::int AS active_last_7d FROM test_attempts WHERE created_at >= now() - interval '7 days'"),
-    pool.query("SELECT COUNT(*)::int AS registrations_this_week FROM users WHERE created_at >= date_trunc('week', now())"),
-    pool.query("SELECT COUNT(*)::int AS tests_taken FROM test_attempts"),
-    pool.query("SELECT AVG(score)::numeric(10,2) AS avg_score FROM test_attempts WHERE score IS NOT NULL"),
-    pool.query("SELECT COUNT(*)::int AS certificates_issued FROM certificates"),
-    pool.query("SELECT CASE WHEN COUNT(*)=0 THEN 0 ELSE SUM(CASE WHEN score >= COALESCE(pass_threshold,0) THEN 1 ELSE 0 END)::float/COUNT(*) END AS pass_rate FROM test_attempts")
-  ];
+  // users total
+  const usersCountP = prisma.user.count();
 
-  const [totalRes, activeRes, regsRes, testsRes, avgRes, certsRes, passRes] = await Promise.all(queries);
+  // active last 7 days (distinct users with attempts)
+  const activeLast7dP = prisma.$queryRaw`
+    SELECT COUNT(DISTINCT "user_id")::int AS cnt
+    FROM "test_attempts"
+    WHERE "created_at" >= NOW() - INTERVAL '7 days'
+  `;
+
+  // registrations this week
+  const regsThisWeekP = prisma.$queryRaw`
+    SELECT COUNT(*)::int AS cnt
+    FROM "users"
+    WHERE "created_at" >= date_trunc('week', NOW())
+  `;
+
+  // tests taken total
+  const testsTakenP = prisma.testAttempt.count();
+
+  // avg score (non-null)
+  const avgScoreAggP = prisma.testAttempt.aggregate({
+    _avg: { score: true },
+    where: { score: { not: null } },
+  });
+
+  // certificates issued
+  const certsCountP = prisma.certificate.count();
+
+  // pass rate = passed/total (score >= pass_threshold), computed in SQL to avoid client filtering
+  const passRateP = prisma.$queryRaw`
+    SELECT CASE WHEN COUNT(*)=0 THEN 0
+                ELSE SUM(CASE WHEN "score" >= COALESCE("pass_threshold",0) THEN 1 ELSE 0 END)::float / COUNT(*)
+           END AS pass_rate
+    FROM "test_attempts"
+    WHERE "score" IS NOT NULL
+  `;
+
+  const [
+    usersCount,
+    activeLast7d,
+    regsThisWeek,
+    testsTaken,
+    avgScoreAgg,
+    certsCount,
+    passRateRow,
+  ] = await Promise.all([
+    usersCountP,
+    activeLast7dP,
+    regsThisWeekP,
+    testsTakenP,
+    avgScoreAggP,
+    certsCountP,
+    passRateP,
+  ]);
 
   const data = {
-    total_users: Number(totalRes.rows[0].total_users || 0),
-    active_last_7d: Number(activeRes.rows[0].active_last_7d || 0),
-    registrations_this_week: Number(regsRes.rows[0].registrations_this_week || 0),
-    tests_taken: Number(testsRes.rows[0].tests_taken || 0),
-    avg_score: Number(avgRes.rows[0].avg_score || 0),
-    certificates_issued: Number(certsRes.rows[0].certificates_issued || 0),
-    pass_rate: Number(passRes.rows[0].pass_rate || 0),
-    last_updated: new Date().toISOString()
+    total_users: usersCount || 0,
+    active_last_7d: Number(activeLast7d?.[0]?.cnt || 0),
+    registrations_this_week: Number(regsThisWeek?.[0]?.cnt || 0),
+    tests_taken: testsTaken || 0,
+    avg_score: Number((avgScoreAgg._avg.score ?? 0).toFixed(2)),
+    certificates_issued: certsCount || 0,
+    pass_rate: Number(passRateRow?.[0]?.pass_rate || 0),
+    last_updated: new Date().toISOString(),
   };
 
-  try {
-    await redis.set(OVERVIEW_KEY, JSON.stringify(data), 'EX', 120); // cache 2 min
-  } catch (e) {
-    console.error('redis set error', e.message);
-  }
-
+  await cacheSet(OVERVIEW_KEY, data, 120); // 2 minutes
   return data;
 }
 
+// ───────────────────────────────────────────────────────────────
+// GLOBAL DAILY (precomputed analytics_daily with fallback)
+// ───────────────────────────────────────────────────────────────
+const DAILY_KEY = (days) => `analytics:daily:${days}`;
+
 export async function getDaily(days = 30) {
-  // try cache
   const key = DAILY_KEY(days);
-  await ensureRedis();
-  if (redis) {
-    try {
-      const cached = await redis.get(key);
-      if (cached) return JSON.parse(cached);
-    } catch (e) { console.error('redis read error', e.message); }
-  }
+  const cached = await cacheGet(key);
+  if (cached) return cached;
 
-  // first try precomputed analytics_daily
-  const dailyRows = await pool.query(
-    `SELECT date, registrations, tests, avg_score, certificates, pass_rate FROM analytics_daily
-     WHERE date >= (current_date - $1::int + 1)
-     ORDER BY date`,
-    [days]
-  );
+  // Try precomputed AnalyticsDaily first
+  const since = new Date();
+  since.setDate(since.getDate() - Number(days));
 
-  if (dailyRows.rows.length > 0) {
-    const registrations = dailyRows.rows.map(r => ({ date: r.date.toISOString().slice(0,10), count: Number(r.registrations) }));
-    const tests = dailyRows.rows.map(r => ({ date: r.date.toISOString().slice(0,10), count: Number(r.tests) }));
-    const avg_score = dailyRows.rows.map(r => ({ date: r.date.toISOString().slice(0,10), value: Number(r.avg_score) }));
+  const dailyRows = await prisma.analyticsDaily.findMany({
+    where: { date: { gte: since } },
+    orderBy: { date: "asc" },
+    select: { date: true, registrations: true, tests: true, avgScore: true },
+  });
+
+  if (dailyRows.length > 0) {
+    const registrations = dailyRows.map((r) => ({
+      date: r.date.toISOString().slice(0, 10),
+      count: Number(r.registrations || 0),
+    }));
+    const tests = dailyRows.map((r) => ({
+      date: r.date.toISOString().slice(0, 10),
+      count: Number(r.tests || 0),
+    }));
+    const avg_score = dailyRows.map((r) => ({
+      date: r.date.toISOString().slice(0, 10),
+      value: Number(r.avgScore || 0),
+    }));
     const result = { registrations, tests, avg_score };
-    if (redis) {
-      try { await redis.set(key, JSON.stringify(result), 'EX', 300); } catch (e) { console.error('redis set error', e.message); }
-    }
+    await cacheSet(key, result, 300);
     return result;
   }
 
-  // fallback: compute from raw tables
-  const registrationsQ = await pool.query(
-    `SELECT date_trunc('day', created_at)::date AS date, COUNT(*)::int AS count
-     FROM users WHERE created_at >= now() - ($1::int * interval '1 day')
-     GROUP BY date ORDER BY date`, [days]
-  );
+  // Fallback: compute from raw tables (SQL for efficiency)
+  const regsQ = prisma.$queryRaw`
+    SELECT date_trunc('day',"created_at")::date AS d, COUNT(*)::int AS c
+    FROM "users"
+    WHERE "created_at" >= NOW() - (${days}::int * INTERVAL '1 day')
+    GROUP BY d ORDER BY d
+  `;
+  const testsQ = prisma.$queryRaw`
+    SELECT date_trunc('day',"created_at")::date AS d, COUNT(*)::int AS c
+    FROM "test_attempts"
+    WHERE "created_at" >= NOW() - (${days}::int * INTERVAL '1 day')
+    GROUP BY d ORDER BY d
+  `;
+  const avgQ = prisma.$queryRaw`
+    SELECT date_trunc('day',"created_at")::date AS d, AVG("score")::numeric(10,2) AS a
+    FROM "test_attempts"
+    WHERE "created_at" >= NOW() - (${days}::int * INTERVAL '1 day') AND "score" IS NOT NULL
+    GROUP BY d ORDER BY d
+  `;
 
-  const testsQ = await pool.query(
-    `SELECT date_trunc('day', created_at)::date AS date, COUNT(*)::int AS count
-     FROM test_attempts WHERE created_at >= now() - ($1::int * interval '1 day')
-     GROUP BY date ORDER BY date`, [days]
-  );
+  const [regsRows, testsRows, avgRows] = await Promise.all([regsQ, testsQ, avgQ]);
 
-  const avgQ = await pool.query(
-    `SELECT date_trunc('day', created_at)::date AS date, AVG(score)::numeric(10,2) AS avg
-     FROM test_attempts WHERE created_at >= now() - ($1::int * interval '1 day')
-     GROUP BY date ORDER BY date`, [days]
-  );
-
-  const registrations = registrationsQ.rows.map(r => ({ date: r.date.toISOString().slice(0,10), count: Number(r.count) }));
-  const tests = testsQ.rows.map(r => ({ date: r.date.toISOString().slice(0,10), count: Number(r.count) }));
-  const avg_score = avgQ.rows.map(r => ({ date: r.date.toISOString().slice(0,10), value: Number(r.avg) }));
+  const registrations = regsRows.map((r) => ({
+    date: new Date(r.d).toISOString().slice(0, 10),
+    count: Number(r.c || 0),
+  }));
+  const tests = testsRows.map((r) => ({
+    date: new Date(r.d).toISOString().slice(0, 10),
+    count: Number(r.c || 0),
+  }));
+  const avg_score = avgRows.map((r) => ({
+    date: new Date(r.d).toISOString().slice(0, 10),
+    value: Number(r.a || 0),
+  }));
 
   const result = { registrations, tests, avg_score };
-  if (redis) {
-    try { await redis.set(key, JSON.stringify(result), 'EX', 300); } catch (e) { console.error('redis set error', e.message); }
-  }
+  await cacheSet(key, result, 300);
   return result;
 }
 
+// ───────────────────────────────────────────────────────────────
+// GLOBAL TOP COURSES (by attempts), with titles
+// ───────────────────────────────────────────────────────────────
 export async function getTopCourses(limit = 10) {
-  const q = `
-    SELECT t.id, COALESCE(t.title_ua,t.title_en) AS title, COUNT(a.id) AS tests_taken, AVG(a.score)::numeric(10,2) AS avg_score
-    FROM tests t
-    LEFT JOIN test_attempts a ON a.test_id = t.id
-    GROUP BY t.id, title
-    ORDER BY tests_taken DESC
-    LIMIT $1
-  `;
-  const rows = await pool.query(q, [limit]);
-  return rows.rows;
+  // group attempts by testId
+  const grouped = await prisma.testAttempt.groupBy({
+    by: ["testId"],
+    _count: { testId: true },
+    _avg: { score: true },
+    orderBy: { _count: { testId: "desc" } },
+    take: Math.max(1, Math.min(Number(limit) || 10, 50)),
+  });
+
+  if (grouped.length === 0) return [];
+
+  const testIds = grouped.map((g) => g.testId);
+  const tests = await prisma.test.findMany({
+    where: { id: { in: testIds } },
+    select: { id: true, titleUa: true, titleEn: true },
+  });
+  const titleById = new Map(tests.map((t) => [t.id, t.titleUa || t.titleEn || `Test #${t.id}`]));
+
+  return grouped.map((g) => ({
+    id: g.testId,
+    title: titleById.get(g.testId) || `Test #${g.testId}`,
+    tests_taken: g._count.testId || 0,
+    avg_score: Number((g._avg.score ?? 0).toFixed(2)),
+  }));
 }
 
+// ───────────────────────────────────────────────────────────────
+// GLOBAL RECENT EVENTS (admin feed style)
+// ───────────────────────────────────────────────────────────────
 export async function getRecent(limit = 50, page = 1) {
-  const offset = (page - 1) * limit;
-  const q = `SELECT id, user_id, type, description, meta, created_at FROM events ORDER BY created_at DESC LIMIT $1 OFFSET $2`;
-  const rows = await pool.query(q, [limit, offset]);
-  return { items: rows.rows, page, limit };
+  const take = Math.max(1, Math.min(Number(limit) || 50, 200));
+  const skip = (Math.max(1, Number(page) || 1) - 1) * take;
+
+  const events = await prisma.event.findMany({
+    orderBy: { createdAt: "desc" },
+    take,
+    skip,
+    select: { id: true, userId: true, type: true, description: true, meta: true, createdAt: true },
+  });
+
+  return {
+    items: events.map((e) => ({
+      id: e.id.toString(),
+      user_id: e.userId ? Number(e.userId) : null,
+      type: e.type,
+      description: e.description || "",
+      meta: e.meta || null,
+      created_at: e.createdAt,
+    })),
+    page: Number(page) || 1,
+    limit: take,
+  };
 }
 
-export async function getUserMetrics({ from = null, to = null, page = 1, limit = 50 }) {
-  const offset = (page - 1) * limit;
-  // Простий приклад: повернути список користувачів з кількістю тестів та середнім балом
-  const q = `
-    SELECT u.id, u.email, u.first_name, u.last_name, u.created_at,
-           COALESCE(a.tests_count,0) AS tests_count,
-           COALESCE(a.avg_score,0) AS avg_score
-    FROM users u
-    LEFT JOIN (
-      SELECT user_id, COUNT(*) AS tests_count, AVG(score) AS avg_score
-      FROM test_attempts
-      GROUP BY user_id
-    ) a ON a.user_id = u.id
-    ORDER BY u.created_at DESC
-    LIMIT $1 OFFSET $2
+// ───────────────────────────────────────────────────────────────
+// GLOBAL USER METRICS LIST (paginated dashboard table)
+// ───────────────────────────────────────────────────────────────
+export async function getUserMetrics({ page = 1, limit = 50 } = {}) {
+  const take = Math.max(1, Math.min(Number(limit) || 50, 200));
+  const skip = (Math.max(1, Number(page) || 1) - 1) * take;
+
+  // pull users page
+  const users = await prisma.user.findMany({
+    orderBy: { createdAt: "desc" },
+    take,
+    skip,
+    select: { id: true, email: true, firstName: true, lastName: true, createdAt: true },
+  });
+  const userIds = users.map((u) => u.id);
+  if (userIds.length === 0) return { items: [], page: Number(page) || 1, limit: take };
+
+  // aggregate attempts per user
+  const attemptsAgg = await prisma.testAttempt.groupBy({
+    by: ["userId"],
+    where: { userId: { in: userIds } },
+    _count: { _all: true },
+    _avg: { score: true },
+  });
+  const attemptsMap = new Map(attemptsAgg.map((a) => [a.userId, a]));
+
+  const items = users.map((u) => {
+    const agg = attemptsMap.get(u.id);
+    return {
+      id: u.id,
+      email: u.email,
+      first_name: u.firstName,
+      last_name: u.lastName,
+      created_at: u.createdAt,
+      tests_count: Number(agg?._count?._all || 0),
+      avg_score: Number((agg?._avg?.score ?? 0).toFixed(2)),
+    };
+  });
+
+  return { items, page: Number(page) || 1, limit: take };
+}
+
+// ───────────────────────────────────────────────────────────────
+// GLOBAL TEST RESULTS SUMMARY (attempts / avg_score / pass_rate)
+// ───────────────────────────────────────────────────────────────
+export async function getTestResults(testId, { from = null, to = null } = {}) {
+  const tid = Number(testId);
+  if (!tid) return { attempts: 0, avg_score: 0, pass_rate: 0 };
+
+  // Date bounds for raw SQL
+  const rows = await prisma.$queryRaw`
+    SELECT
+      COUNT(*)::int AS attempts,
+      AVG("score")::numeric(10,2) AS avg_score,
+      CASE WHEN COUNT(*)=0 THEN 0
+           ELSE SUM(CASE WHEN "score" >= COALESCE("pass_threshold",0) THEN 1 ELSE 0 END)::float / COUNT(*)
+      END AS pass_rate
+    FROM "test_attempts"
+    WHERE "test_id" = ${tid}
+      AND (${from ? prisma.$queryRaw`"created_at" >= ${from}` : prisma.$queryRaw`1=1`})
+      AND (${to ? prisma.$queryRaw`"created_at" <= ${to}` : prisma.$queryRaw`1=1`})
   `;
-  const rows = await pool.query(q, [limit, offset]);
-  return { items: rows.rows, page, limit };
+
+  const r = rows?.[0] || {};
+  return {
+    attempts: Number(r.attempts || 0),
+    avg_score: Number(r.avg_score || 0),
+    pass_rate: Number(r.pass_rate || 0),
+  };
 }
 
-export async function getTestResults(testId, { from = null, to = null }) {
-  const params = [testId];
-  let dateFilter = '';
-  if (from) { params.push(from); dateFilter += ` AND created_at >= $${params.length}`; }
-  if (to) { params.push(to); dateFilter += ` AND created_at <= $${params.length}`; }
-
-  const q = `
-    SELECT COUNT(*)::int AS attempts, AVG(score)::numeric(10,2) AS avg_score,
-      SUM(CASE WHEN score >= COALESCE(pass_threshold,0) THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*),0) AS pass_rate
-    FROM test_attempts
-    WHERE test_id = $1 ${dateFilter}
-  `;
-  const rows = await pool.query(q, params);
-  return rows.rows[0];
-}
-
+// ───────────────────────────────────────────────────────────────
+// PER-USER OVERVIEW (matches your previous userOverview logic)
+// ───────────────────────────────────────────────────────────────
 export async function getUserOverview(userId) {
-  // per-user quick metrics
+  const uid = Number(userId);
+
   const [coursesRes, testsRes, avgRes, certsRes, passRes, streakRes] = await Promise.all([
-    // distinct courses/tests user interacted with
-    pool.query("SELECT COUNT(DISTINCT test_id)::int AS courses_enrolled FROM test_attempts WHERE user_id = $1", [userId]),
-    pool.query("SELECT COUNT(*)::int AS my_tests_taken FROM test_attempts WHERE user_id = $1", [userId]),
-    pool.query("SELECT AVG(score)::numeric(10,2) AS my_avg_score FROM test_attempts WHERE user_id = $1 AND score IS NOT NULL", [userId]),
-    pool.query("SELECT COUNT(*)::int AS my_certificates FROM certificates WHERE user_id = $1", [userId]),
-    pool.query("SELECT CASE WHEN COUNT(*)=0 THEN 0 ELSE SUM(CASE WHEN score >= COALESCE(pass_threshold,0) THEN 1 ELSE 0 END)::float/COUNT(*) END AS my_pass_rate FROM test_attempts WHERE user_id = $1", [userId]),
-    // simple activity days in last 30 days
-    pool.query("SELECT COUNT(DISTINCT date_trunc('day', created_at))::int AS recent_active_days FROM test_attempts WHERE user_id = $1 AND created_at >= now() - interval '30 days'", [userId]),
+    prisma.testAttempt.groupBy({
+      by: ["userId", "testId"],
+      where: { userId: uid },
+      _count: { testId: true },
+    }).then((rows) => rows.length), // distinct tests interacted
+    prisma.testAttempt.count({ where: { userId: uid } }),
+    prisma.testAttempt.aggregate({ where: { userId: uid, score: { not: null } }, _avg: { score: true } }),
+    prisma.certificate.count({ where: { userId: uid } }),
+    prisma.$queryRaw`
+      SELECT CASE WHEN COUNT(*)=0 THEN 0
+                  ELSE SUM(CASE WHEN "score" >= COALESCE("pass_threshold",0) THEN 1 ELSE 0 END)::float / COUNT(*)
+             END AS pass_rate
+      FROM "test_attempts"
+      WHERE "user_id" = ${uid} AND "score" IS NOT NULL
+    `,
+    prisma.$queryRaw`
+      SELECT COUNT(*)::int AS days
+      FROM (
+        SELECT DISTINCT date_trunc('day',"created_at")::date AS d
+        FROM "test_attempts"
+        WHERE "user_id" = ${uid} AND "created_at" >= NOW() - INTERVAL '30 days'
+      ) s
+    `,
   ]);
 
   return {
-    user_id: userId,
-    courses_enrolled: Number(coursesRes.rows[0]?.courses_enrolled || 0),
-    my_tests_taken: Number(testsRes.rows[0]?.my_tests_taken || 0),
-    my_avg_score: Number(avgRes.rows[0]?.my_avg_score || 0),
-    my_certificates: Number(certsRes.rows[0]?.my_certificates || 0),
-    my_pass_rate: Number(passRes.rows[0]?.my_pass_rate || 0),
-    current_streak_days: Number(streakRes.rows[0]?.recent_active_days || 0),
+    user_id: uid,
+    courses_enrolled: Number(coursesRes || 0),
+    my_tests_taken: Number(testsRes || 0),
+    my_avg_score: Number((avgRes._avg.score ?? 0).toFixed(2)),
+    my_certificates: Number(certsRes || 0),
+    my_pass_rate: Number(passRes?.[0]?.pass_rate || 0),
+    current_streak_days: Number(streakRes?.[0]?.days || 0),
     last_updated: new Date().toISOString(),
   };
 }
 
+// ───────────────────────────────────────────────────────────────
+// PER-USER DAILY ACTIVITY (attempts + certificates union)
+// ───────────────────────────────────────────────────────────────
 export async function getUserDaily(userId, days = 30) {
-  const registrations = [];
-  // activity: combined actions per day (test attempts + certificates)
-  const activityQ = await pool.query(
-    `SELECT date_trunc('day', created_at)::date AS date, COUNT(*)::int AS count
-     FROM (
-       SELECT created_at FROM test_attempts WHERE user_id = $1
-       UNION ALL
-       SELECT issued AS created_at FROM certificates WHERE user_id = $1
-     ) s
-     WHERE created_at >= now() - ($2::int * interval '1 day')
-     GROUP BY date ORDER BY date`,
-    [userId, days]
-  );
+  const uid = Number(userId);
 
-  const testsQ = await pool.query(
-    `SELECT date_trunc('day', created_at)::date AS date, COUNT(*)::int AS count
-     FROM test_attempts WHERE user_id = $1 AND created_at >= now() - ($2::int * interval '1 day')
-     GROUP BY date ORDER BY date`,
-    [userId, days]
-  );
+  const activityQ = prisma.$queryRaw`
+    SELECT date_trunc('day', s.created_at)::date AS d, COUNT(*)::int AS c
+    FROM (
+      SELECT "created_at" FROM "test_attempts" WHERE "user_id" = ${uid}
+      UNION ALL
+      SELECT "issued" AS "created_at" FROM "certificates" WHERE "user_id" = ${uid}
+    ) s
+    WHERE s.created_at >= NOW() - (${days}::int * INTERVAL '1 day')
+    GROUP BY d ORDER BY d
+  `;
 
-  const activity = activityQ.rows.map(r => ({ date: r.date.toISOString().slice(0,10), count: Number(r.count) }));
-  const tests = testsQ.rows.map(r => ({ date: r.date.toISOString().slice(0,10), count: Number(r.count) }));
+  const testsQ = prisma.$queryRaw`
+    SELECT date_trunc('day',"created_at")::date AS d, COUNT(*)::int AS c
+    FROM "test_attempts"
+    WHERE "user_id" = ${uid} AND "created_at" >= NOW() - (${days}::int * INTERVAL '1 day')
+    GROUP BY d ORDER BY d
+  `;
+
+  const [activityRows, testRows] = await Promise.all([activityQ, testsQ]);
+
+  const activity = activityRows.map((r) => ({
+    date: new Date(r.d).toISOString().slice(0, 10),
+    count: Number(r.c || 0),
+  }));
+  const tests = testRows.map((r) => ({
+    date: new Date(r.d).toISOString().slice(0, 10),
+    count: Number(r.c || 0),
+  }));
 
   return { activity, tests };
 }
 
+// ───────────────────────────────────────────────────────────────
+// PER-USER TOP COURSES (by attempts), with titles
+// ───────────────────────────────────────────────────────────────
 export async function getUserTopCourses(userId, limit = 10) {
-  const q = `
-    SELECT t.id, COALESCE(t.title_ua,t.title_en) AS name, COUNT(a.id)::int AS tests_taken, AVG(a.score)::numeric(10,2) AS avg_score
-    FROM tests t
-    JOIN test_attempts a ON a.test_id = t.id
-    WHERE a.user_id = $1
-    GROUP BY t.id, name
-    ORDER BY tests_taken DESC
-    LIMIT $2
-  `;
-  const rows = await pool.query(q, [userId, limit]);
-  return rows.rows.map(r => ({ name: r.name, tests_taken: Number(r.tests_taken), avg_score: Number(r.avg_score || 0) }));
+  const uid = Number(userId);
+  const grouped = await prisma.testAttempt.groupBy({
+    by: ["testId"],
+    where: { userId: uid },
+    _count: { testId: true },
+    _avg: { score: true },
+    orderBy: { _count: { testId: "desc" } },
+    take: Math.max(1, Math.min(Number(limit) || 10, 50)),
+  });
+
+  if (grouped.length === 0) return [];
+
+  const testIds = grouped.map((g) => g.testId);
+  const tests = await prisma.test.findMany({
+    where: { id: { in: testIds } },
+    select: { id: true, titleUa: true, titleEn: true },
+  });
+  const titleById = new Map(tests.map((t) => [t.id, t.titleUa || t.titleEn || `Test #${t.id}`]));
+
+  return grouped.map((g) => ({
+    name: titleById.get(g.testId) || `Test #${g.testId}`,
+    tests_taken: g._count.testId || 0,
+    avg_score: Number((g._avg.score ?? 0).toFixed(2)),
+  }));
 }
 
+// ───────────────────────────────────────────────────────────────
+// PER-USER RECENT (combine attempts + certificates + events)
+// ───────────────────────────────────────────────────────────────
 export async function getUserRecent(userId, limit = 50, page = 1) {
-  const offset = (page - 1) * limit;
-  // combine events + certificates + test_attempts summaries
-  const q = `
+  const uid = Number(userId);
+  const take = Math.max(1, Math.min(Number(limit) || 50, 200));
+  const skip = (Math.max(1, Number(page) || 1) - 1) * take;
+
+  // Use raw union for performance and correct ordering
+  const rows = await prisma.$queryRaw`
     SELECT created_at, type, description FROM (
-      SELECT created_at, 'test_attempt'::text AS type, ('Test attempt: ' || COALESCE(score::text,'')) AS description FROM test_attempts WHERE user_id = $1
+      SELECT "created_at", 'test_attempt'::text AS type,
+             ('Test attempt: ' || COALESCE("score"::text,'')) AS description
+      FROM "test_attempts"
+      WHERE "user_id" = ${uid}
+
       UNION ALL
-      SELECT issued AS created_at, 'certificate'::text AS type, ('Certificate: ' || cert_id || ' / ' || COALESCE(course,'')) AS description FROM certificates WHERE user_id = $1
+
+      SELECT "issued" AS created_at, 'certificate'::text AS type,
+             ('Certificate: ' || "cert_id" || ' / ' || COALESCE("course",'')) AS description
+      FROM "certificates"
+      WHERE "user_id" = ${uid}
+
       UNION ALL
-      SELECT created_at, type, description FROM events WHERE user_id = $1
+
+      SELECT "created_at", "type", COALESCE("description",'') AS description
+      FROM "events"
+      WHERE "user_id" = ${BigInt(uid)}
     ) s
     ORDER BY created_at DESC
-    LIMIT $2 OFFSET $3
+    LIMIT ${take} OFFSET ${skip}
   `;
-  const rows = await pool.query(q, [userId, limit, offset]);
-  return { items: rows.rows, page: page, limit };
+
+  return {
+    items: rows.map((r) => ({
+      created_at: r.created_at,
+      type: r.type,
+      description: r.description,
+    })),
+    page: Number(page) || 1,
+    limit: take,
+  };
 }

@@ -1,3 +1,4 @@
+//achievementController.js
 import {
     getUserAchievements,
     updateUserAchievement,
@@ -5,7 +6,7 @@ import {
     updateAchievementsBatch,
     unlockUserAchievementByCode,
 } from "../models/AchievementModel.js";
-
+import { triggerAchievementsCheck } from "../utils/achievementEngine.js";
 // 🔹 Отримати всі досягнення користувача (з урахуванням мови)
 export async function getAchievements(req, res) {
     try {
@@ -73,32 +74,19 @@ export async function unlockAchievement(req, res) {
         const userId = req.user.id;
         const { code } = req.body;
 
-        if (!code) {
-            return res.status(400).json({
-                success: false,
-                message: "Achievement code required",
-            });
-        }
+        if (!code) return res.status(400).json({ success: false, message: "Achievement code required" });
 
         const unlocked = await unlockUserAchievementByCode(userId, code);
-
-        if (!unlocked) {
-            return res.status(404).json({
-                success: false,
-                message: "Achievement not found",
-            });
-        }
+        const newlyUnlocked = await triggerAchievementsCheck(userId);
 
         res.json({
             success: true,
             message: "Achievement unlocked",
             achievement: unlocked,
+            newAchievements: newlyUnlocked,
         });
     } catch (err) {
         console.error("❌ Error unlocking achievement:", err.message);
-        res.status(500).json({
-            success: false,
-            message: "Server error",
-        });
+        res.status(500).json({ success: false, message: "Server error" });
     }
 }

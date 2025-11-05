@@ -1,12 +1,14 @@
 import OpenAI from "openai";
 import dotenv from "dotenv";
 import axios from "axios";
-import { pool } from "../config/db.js";
-
+import prisma from "../config/prisma.js"; // ✅ Prisma ORM
 dotenv.config();
+
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// 🌍 Безкоштовний переклад через Google Translate API
+/* ======================================================
+   🌍 Безкоштовний переклад через Google Translate API
+   ====================================================== */
 async function translateText(text, from = "uk", to = "en") {
     if (!text || !text.trim()) return text;
     try {
@@ -28,36 +30,37 @@ async function translateText(text, from = "uk", to = "en") {
     }
 }
 
-// ======================================================
-// 🧠 Генерація або отримання пояснення з БД
-// ======================================================
+/* ======================================================
+   🧠 Генерація або отримання пояснення з БД через Prisma
+   ====================================================== */
 export const explainOneQuestion = async (req, res) => {
     try {
         const { question, options, correct, userAnswer } = req.body;
 
         if (!question || !options || !correct) {
-            return res
-                .status(400)
-                .json({ success: false, message: "❌ Не передано дані питання" });
+            return res.status(400).json({
+                success: false,
+                message: "❌ Не передано дані питання",
+            });
         }
 
-        // 🔍 Перевіряємо, чи є вже пояснення в базі
-        const existing = await pool.query(
-            `SELECT explanation_ua, explanation_en FROM explanations WHERE question_text_ua = $1 LIMIT 1`,
-            [question.trim()]
-        );
+        // 🔍 1. Перевіряємо, чи вже є пояснення
+        const existing = await prisma.explanation.findFirst({
+            where: { questionTextUa: question.trim() },
+            select: { explanationUa: true, explanationEn: true },
+        });
 
-        if (existing.rows.length > 0) {
+        if (existing) {
             console.log("✅ Взято з БД (кеш)");
             return res.json({
                 success: true,
-                explanation_ua: existing.rows[0].explanation_ua,
-                explanation_en: existing.rows[0].explanation_en,
+                explanation_ua: existing.explanationUa,
+                explanation_en: existing.explanationEn,
                 cached: true,
             });
         }
 
-        // 🧩 Якщо нема — формуємо запит до GPT українською
+        // 🧩 2. Формуємо запит до GPT українською
         const prompt = `
 Ти — досвідчений викладач програмування.
 Поясни коротко українською мовою:
@@ -69,7 +72,7 @@ export const explainOneQuestion = async (req, res) => {
 Варіанти: ${options.join(", ")}
 Правильна відповідь: ${correct}
 Відповідь користувача: ${userAnswer || "—"}
-        `;
+    `;
 
         const completion = await client.chat.completions.create({
             model: "gpt-4o-mini",
@@ -78,15 +81,19 @@ export const explainOneQuestion = async (req, res) => {
             max_tokens: 500,
         });
 
-        const explanationUa = completion.choices[0].message.content?.trim();
+        const explanationUa = completion.choices[0]?.message?.content?.trim() || "Немає відповіді";
         const explanationEn = await translateText(explanationUa, "uk", "en");
+        const questionEn = await translateText(question, "uk", "en");
 
-        // 💾 Зберігаємо в базу для наступних користувачів
-        await pool.query(
-            `INSERT INTO explanations (question_text_ua, question_text_en, explanation_ua, explanation_en)
-             VALUES ($1,$2,$3,$4)`,
-            [question, await translateText(question, "uk", "en"), explanationUa, explanationEn]
-        );
+        // 💾 3. Зберігаємо нове пояснення у базу
+        await prisma.explanation.create({
+            data: {
+                questionTextUa: question.trim(),
+                questionTextEn: questionEn,
+                explanationUa: explanationUa,
+                explanationEn: explanationEn,
+            },
+        });
 
         console.log("💾 Збережено нове пояснення у базі");
 

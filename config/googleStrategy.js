@@ -1,6 +1,6 @@
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
-import { pool } from "./db.js";
+import prisma from "./prisma.js"; // 👈 твій Prisma-клієнт
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -14,29 +14,63 @@ passport.use(
         },
         async (accessToken, refreshToken, profile, done) => {
             try {
-                const email = profile.emails[0].value;
-                const first_name = profile.name.givenName;
-                const last_name = profile.name.familyName;
+                const email = profile.emails?.[0]?.value;
+                const first_name = profile.name?.givenName || "";
+                const last_name = profile.name?.familyName || "";
 
-                // 🔸 перевіряємо чи користувач існує
-                const existing = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
-
-                if (existing.rows.length > 0) {
-                    return done(null, existing.rows[0]);
+                if (!email) {
+                    return done(new Error("No email from Google profile"), null);
                 }
 
-                // 🔹 якщо ні — створюємо
-                const result = await pool.query(
-                    `INSERT INTO users (first_name, last_name, email, password, role, created_at)
-           VALUES ($1, $2, $3, '', 'user', NOW())
-           RETURNING id, first_name, last_name, email, role, created_at`,
-                    [first_name, last_name, email]
-                );
+                // 🔸 Перевіряємо чи користувач вже існує
+                let user = await prisma.user.findUnique({
+                    where: { email },
+                });
 
-                done(null, result.rows[0]);
+                if (!user) {
+                    // 🔹 Якщо ні — створюємо
+                    user = await prisma.user.create({
+                        data: {
+                            first_name,
+                            last_name,
+                            email,
+                            password: "", // порожній пароль, бо OAuth
+                            role: "user",
+                            created_at: new Date(),
+                        },
+                        select: {
+                            id: true,
+                            first_name: true,
+                            last_name: true,
+                            email: true,
+                            role: true,
+                            created_at: true,
+                        },
+                    });
+                }
+
+                return done(null, user);
             } catch (err) {
+                console.error("❌ GoogleStrategy error:", err);
                 done(err, null);
             }
         }
     )
 );
+
+passport.serializeUser((user, done) => {
+    done(null, user.id);
+});
+
+passport.deserializeUser(async (id, done) => {
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id: Number(id) },
+        });
+        done(null, user);
+    } catch (err) {
+        done(err, null);
+    }
+});
+
+export default passport;

@@ -1,8 +1,7 @@
-// routes/certificateRoutes.js
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { pool } from "../config/db.js"; // ✅ іменований імпорт!
+import prisma from "../config/prisma.js";
 import { generateCertificatePDF } from "../utils/certificateGenerator.js";
 
 const router = express.Router();
@@ -15,16 +14,27 @@ router.get("/:filename", async (req, res) => {
         const filename = req.params.filename;
         const certPath = path.join("certificates", filename);
 
-        // Якщо сертифікат вже існує — просто віддаємо
+        // Якщо PDF уже існує — просто віддаємо файл
         if (fs.existsSync(certPath)) {
             return res.sendFile(path.resolve(certPath));
         }
 
-        // Інакше генеруємо новий PDF
-        const id = filename.replace("certificate_", "").replace(".pdf", "");
-        console.log(`📜 Сертифікат ${id} не знайдено — генеруємо заново...`);
+        // Інакше — пробуємо знайти сертифікат у БД
+        const certId = filename.replace("certificate_", "").replace(".pdf", "");
+        console.log(`📜 Сертифікат ${certId} не знайдено — перевіряємо в БД...`);
 
-        const resultPath = await generateCertificatePDF(id);
+        const certificate = await prisma.certificate.findUnique({
+            where: { certId },
+        });
+
+        if (!certificate) {
+            return res
+                .status(404)
+                .json({ success: false, message: "Certificate not found" });
+        }
+
+        // Генеруємо PDF заново
+        const resultPath = await generateCertificatePDF(certId);
         return res.sendFile(path.resolve(resultPath));
     } catch (err) {
         console.error("❌ Error serving certificate:", err);
@@ -37,7 +47,7 @@ router.get("/:filename", async (req, res) => {
  * ────────────────────────────────────────────────*/
 router.put("/:id", async (req, res) => {
     try {
-        const { id } = req.params;
+        const { id } = req.params; // це `id` або `certId`
         const { expires } = req.body;
 
         if (!expires) {
@@ -46,12 +56,18 @@ router.put("/:id", async (req, res) => {
                 .json({ success: false, message: "Missing 'expires' field" });
         }
 
-        const result = await pool.query(
-            "UPDATE certificates SET expires = $1 WHERE id = $2 RETURNING *",
-            [expires, id]
-        );
+        // Можемо оновлювати по id або по certId — перевіримо обидва варіанти
+        const certificate = await prisma.certificate.updateMany({
+            where: {
+                OR: [
+                    { id: Number(id) },
+                    { certId: id },
+                ],
+            },
+            data: { expires: new Date(expires) },
+        });
 
-        if (result.rowCount === 0) {
+        if (certificate.count === 0) {
             return res
                 .status(404)
                 .json({ success: false, message: "Certificate not found" });
@@ -59,8 +75,7 @@ router.put("/:id", async (req, res) => {
 
         res.json({
             success: true,
-            message: "Certificate expiration updated successfully",
-            certificate: result.rows[0],
+            message: "✅ Certificate expiration updated successfully",
         });
     } catch (err) {
         console.error("❌ Error updating certificate date:", err);

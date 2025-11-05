@@ -1,8 +1,11 @@
-import { pool } from "../config/db.js";
-import { translateText } from "../utils/translate.js";
-import OpenAI from "openai";
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-// 🟢 Створити досягнення (автопереклад)
+import { PrismaClient } from "@prisma/client";
+import { translateText } from "../utils/translate.js"; // утиліта перекладу
+
+const prisma = new PrismaClient();
+
+/* ──────────────────────────────────────────────
+ * 🟢 Створити досягнення (без GPT)
+ * ────────────────────────────────────────────── */
 export async function createAchievement(req, res) {
     try {
         const {
@@ -11,53 +14,58 @@ export async function createAchievement(req, res) {
             image_url,
             category,
             icon,
-            trigger_text,
+            condition_type, // тип умови
+            condition_value, // значення умови
         } = req.body;
 
-        // 🧠 Запит до ChatGPT для генерації коду
-        const prompt = `
-      Напиши фрагмент коду JavaScript, який перевіряє умову:
-      "${trigger_text}".
-      Змінна "user" містить дані користувача: testsPassed, certificates, score тощо.
-      Використай функцію unlockAchievement(user, "код_досягнення") якщо умова виконується.
-      Тільки код, без пояснень.
-    `;
+        if (!title_ua) {
+            return res.status(400).json({
+                success: false,
+                message: "Назва (title_ua) обов’язкова",
+            });
+        }
 
-        const response = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [{ role: "user", content: prompt }],
+        // 🧩 Генерація унікального коду
+        const code =
+            req.body.code ||
+            title_ua.toLowerCase().replace(/\s+/g, "_").replace(/[^\w_]/g, "") +
+            "_" +
+            Date.now();
+
+        // 🌐 Автоматичний переклад
+        const title_en = await translateText(title_ua, "en");
+        const description_en = description_ua
+            ? await translateText(description_ua, "en")
+            : "";
+
+        // 💾 Створення запису
+        const achievement = await prisma.achievement.create({
+            data: {
+                code,
+                titleUa: title_ua,
+                titleEn: title_en,
+                descriptionUa: description_ua,
+                descriptionEn: description_en,
+                imageUrl: image_url,
+                category,
+                icon,
+                conditionType: condition_type || null,
+                conditionValue: condition_value ? Number(condition_value) : null,
+            },
         });
 
-        const generated_code = response.choices[0].message.content.trim();
-
-        // 🔹 зберігаємо все
-        const result = await pool.query(
-            `INSERT INTO achievements 
-      (title_ua, description_ua, image_url, category, icon, trigger_text, generated_code)
-      VALUES ($1,$2,$3,$4,$5,$6,$7)
-      RETURNING *`,
-            [title_ua, description_ua, image_url, category, icon, trigger_text, generated_code]
-        );
-
-        res.json({ success: true, achievement: result.rows[0] });
+        res.json({ success: true, achievement });
     } catch (err) {
         console.error("❌ createAchievement error:", err);
-        res.status(500).json({ success: false, message: "Server error" });
+        res
+            .status(500)
+            .json({ success: false, message: "Server error: " + err.message });
     }
 }
 
-// 🔴 Видалити досягнення
-export async function deleteAchievement(req, res) {
-    try {
-        const { id } = req.params;
-        await pool.query(`DELETE FROM achievements WHERE id = $1`, [id]);
-        res.json({ success: true });
-    } catch (err) {
-        console.error("❌ deleteAchievement error:", err);
-        res.status(500).json({ success: false, message: "Server error" });
-    }
-}
-// 🟡 Оновити досягнення
+/* ──────────────────────────────────────────────
+ * 🟡 Оновити досягнення
+ * ────────────────────────────────────────────── */
 export async function updateAchievement(req, res) {
     try {
         const { id } = req.params;
@@ -67,52 +75,69 @@ export async function updateAchievement(req, res) {
             image_url,
             category,
             icon,
-            trigger_text,
+            condition_type,
+            condition_value,
         } = req.body;
 
-        // Якщо оновили умову — GPT має знову згенерувати код
-        let generated_code = null;
-        if (trigger_text) {
-            const prompt = `
-              Напиши фрагмент коду JavaScript, який перевіряє умову:
-              "${trigger_text}".
-              Змінна "user" містить дані користувача: testsPassed, certificates, score тощо.
-              Використай функцію unlockAchievement(user, "код_досягнення") якщо умова виконується.
-              Тільки код, без пояснень.
-            `;
+        // 🌐 Автоматичний переклад
+        const title_en = title_ua ? await translateText(title_ua, "en") : undefined;
+        const description_en = description_ua
+            ? await translateText(description_ua, "en")
+            : undefined;
 
-            const response = await openai.chat.completions.create({
-                model: "gpt-4o-mini",
-                messages: [{ role: "user", content: prompt }],
-            });
-
-            generated_code = response.choices[0].message.content.trim();
-        }
-
-        const result = await pool.query(
-            `UPDATE achievements 
-             SET title_ua=$1, description_ua=$2, image_url=$3, category=$4, icon=$5, trigger_text=$6, generated_code=COALESCE($7, generated_code)
-             WHERE id=$8
-             RETURNING *`,
-            [
-                title_ua,
-                description_ua,
-                image_url,
+        const achievement = await prisma.achievement.update({
+            where: { id: Number(id) },
+            data: {
+                titleUa: title_ua,
+                titleEn: title_en,
+                descriptionUa: description_ua,
+                descriptionEn: description_en,
+                imageUrl: image_url,
                 category,
                 icon,
-                trigger_text,
-                generated_code,
-                id,
-            ]
-        );
+                conditionType: condition_type || null,
+                conditionValue: condition_value ? Number(condition_value) : null,
+            },
+        });
 
-        if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Achievement not found" });
-        }
-
-        res.json({ success: true, achievement: result.rows[0] });
+        res.json({ success: true, achievement });
     } catch (err) {
         console.error("❌ updateAchievement error:", err);
-        res.status(500).json({ success: false, message: "Server error" });
+        res
+            .status(500)
+            .json({ success: false, message: "Server error: " + err.message });
+    }
+}
+
+/* ──────────────────────────────────────────────
+ * 🔴 Видалити досягнення
+ * ────────────────────────────────────────────── */
+export async function deleteAchievement(req, res) {
+    try {
+        const { id } = req.params;
+        await prisma.achievement.delete({ where: { id: Number(id) } });
+        res.json({ success: true });
+    } catch (err) {
+        console.error("❌ deleteAchievement error:", err);
+        res
+            .status(500)
+            .json({ success: false, message: "Server error: " + err.message });
+    }
+}
+
+/* ──────────────────────────────────────────────
+ * 🔹 Отримати всі досягнення (для адмін-панелі)
+ * ────────────────────────────────────────────── */
+export async function getAllAchievements(req, res) {
+    try {
+        const achievements = await prisma.achievement.findMany({
+            orderBy: [{ category: "asc" }, { id: "asc" }],
+        });
+        res.json({ success: true, achievements });
+    } catch (err) {
+        console.error("❌ getAllAchievements error:", err);
+        res
+            .status(500)
+            .json({ success: false, message: "Server error: " + err.message });
     }
 }

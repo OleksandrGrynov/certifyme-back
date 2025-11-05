@@ -1,33 +1,37 @@
 import express from "express";
-import { pool } from "../config/db.js";
-import authMiddleware from "../middleware/authMiddleware.js";
-import { isAdmin } from "../middleware/adminMiddleware.js";
+import prisma from "../config/prisma.js";
+import { verifyToken, isAdmin } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-/* -------------------- ⚙️ Основні налаштування -------------------- */
-router.get("/", authMiddleware, isAdmin, async (req, res) => {
+/* ────────────────────────────────────────────────
+   ⚙️ 1. Основні налаштування
+   ──────────────────────────────────────────────── */
+router.get("/", verifyToken, isAdmin, async (req, res) => {
     try {
-        const result = await pool.query("SELECT * FROM settings LIMIT 1");
-        res.json({ success: true, settings: result.rows[0] || {} });
+        const settings = await prisma.setting.findFirst();
+        res.json({ success: true, settings: settings || {} });
     } catch (err) {
         console.error("❌ getSettings error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-router.put("/", authMiddleware, isAdmin, async (req, res) => {
-    const { email_support, telegram, phone } = req.body;
+router.put("/", verifyToken, isAdmin, async (req, res) => {
     try {
-        await pool.query(
-            `
-            INSERT INTO settings (id, email_support, telegram, phone)
-            VALUES (1, $1, $2, $3)
-            ON CONFLICT (id)
-            DO UPDATE SET email_support = $1, telegram = $2, phone = $3;
-        `,
-            [email_support, telegram, phone]
-        );
+        const { email_support, telegram, phone } = req.body;
+
+        await prisma.setting.upsert({
+            where: { id: 1 },
+            update: { emailSupport: email_support, telegram, phone },
+            create: {
+                id: 1,
+                emailSupport: email_support,
+                telegram,
+                phone,
+            },
+        });
+
         res.json({ success: true, message: "✅ Settings updated" });
     } catch (err) {
         console.error("❌ updateSettings error:", err);
@@ -35,10 +39,13 @@ router.put("/", authMiddleware, isAdmin, async (req, res) => {
     }
 });
 
-/* -------------------- 💻 Системна інформація -------------------- */
-router.get("/system", authMiddleware, isAdmin, async (req, res) => {
+/* ────────────────────────────────────────────────
+   💻 2. Системна інформація
+   ──────────────────────────────────────────────── */
+router.get("/system", verifyToken, isAdmin, async (req, res) => {
     const lang = req.query.lang || "uk";
 
+    // можеш згодом зробити динамічні дані (uptime, load)
     const info = {
         apiVersion: "1.2.3",
         dbStatus: lang === "en" ? "Connected" : "Підключено",
@@ -49,32 +56,36 @@ router.get("/system", authMiddleware, isAdmin, async (req, res) => {
     res.json({ success: true, info });
 });
 
-/* -------------------- 🤖 AI інсайти -------------------- */
-router.get("/insights", authMiddleware, isAdmin, async (req, res) => {
+/* ────────────────────────────────────────────────
+   🤖 3. AI Insights / статистика
+   ──────────────────────────────────────────────── */
+router.get("/insights", verifyToken, isAdmin, async (req, res) => {
     const lang = req.query.lang || "uk";
-    try {
-        const result = await pool.query(`
-            SELECT
-                (SELECT title_ua FROM tests ORDER BY id DESC LIMIT 1) AS last_test_ua,
-                (SELECT title_en FROM tests ORDER BY id DESC LIMIT 1) AS last_test_en,
-                (SELECT COUNT(*) FROM users) AS users_count,
-                (SELECT AVG(percent) FROM certificates) AS avg_percent
-        `);
 
-        const data = result.rows[0];
-        const avg = Math.round(data.avg_percent || 0);
+    try {
+        // Отримуємо все одним запитом
+        const [lastTest, usersCount, avgPercent] = await Promise.all([
+            prisma.test.findFirst({
+                orderBy: { id: "desc" },
+                select: { titleUa: true, titleEn: true },
+            }),
+            prisma.user.count(),
+            prisma.certificate.aggregate({ _avg: { percent: true } }),
+        ]);
+
+        const avg = Math.round(avgPercent._avg.percent || 0);
 
         const insights =
             lang === "en"
                 ? [
-                    `Currently ${data.users_count} registered users.`,
+                    `Currently ${usersCount} registered users.`,
                     `Average test completion rate — ${avg}%.`,
-                    `Last added test: ${data.last_test_en || data.last_test_ua}.`,
+                    `Last added test: ${lastTest?.titleEn || lastTest?.titleUa || "N/A"}.`,
                 ]
                 : [
-                    `Наразі ${data.users_count} зареєстрованих користувачів.`,
+                    `Наразі ${usersCount} зареєстрованих користувачів.`,
                     `Середній рівень проходження тестів — ${avg}%.`,
-                    `Останній доданий тест: ${data.last_test_ua}.`,
+                    `Останній доданий тест: ${lastTest?.titleUa || "Невідомо"}.`,
                 ];
 
         res.json({ success: true, insights });

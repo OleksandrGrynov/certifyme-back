@@ -1,5 +1,4 @@
-// controllers/emailController.js
-import { pool } from "../config/db.js";
+import prisma from "../config/prisma.js";
 import { Resend } from "resend";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
@@ -23,7 +22,7 @@ export async function sendEmailCode(req, res) {
         const { id, email } = jwt.verify(token, process.env.JWT_SECRET);
         console.log("📧 Надсилання коду на:", email);
 
-        // Перевірка змінних середовища
+        // Перевірки конфігурації
         if (!process.env.RESEND_API_KEY) {
             console.error("❌ RESEND_API_KEY відсутній");
             return res
@@ -38,9 +37,7 @@ export async function sendEmailCode(req, res) {
                 .json({ success: false, message: "EMAIL_FROM не заданий у конфігурації" });
         }
 
-        // Забороняємо використання onboarding@resend.dev
         if (EMAIL_FROM.includes("resend.dev")) {
-            console.error("❌ EMAIL_FROM все ще onboarding@resend.dev — змініть у .env");
             return res.status(400).json({
                 success: false,
                 message:
@@ -52,24 +49,28 @@ export async function sendEmailCode(req, res) {
         const code = Math.floor(100000 + Math.random() * 900000).toString();
 
         // Зберігаємо код у БД
-        await pool.query(
-            `INSERT INTO email_verifications (user_id, email, code)
-             VALUES ($1, $2, $3)`,
-            [id, email, code]
-        );
+        await prisma.emailVerification.create({
+            data: {
+                userId: id,
+                email,
+                code,
+                used: false,
+            },
+        });
+
+        // HTML листа
+        const html = `
+      <div style="font-family:Inter,Arial,sans-serif;padding:20px;background:#111;color:#eee;border-radius:10px;">
+        <h2 style="color:#4ade80;">CertifyMe</h2>
+        <p>Ваш код підтвердження:</p>
+        <p style="font-size:32px;letter-spacing:6px;color:#4ade80;text-align:center;"><b>${code}</b></p>
+        <p>Код дійсний протягом <b>10 хвилин</b>.</p>
+      </div>
+    `;
 
         // Надсилаємо лист
-        const html = `
-            <div style="font-family:Inter,Arial,sans-serif;padding:20px;background:#111;color:#eee;border-radius:10px;">
-                <h2 style="color:#4ade80;">CertifyMe</h2>
-                <p>Ваш код підтвердження:</p>
-                <p style="font-size:32px;letter-spacing:6px;color:#4ade80;text-align:center;"><b>${code}</b></p>
-                <p>Код дійсний протягом <b>10 хвилин</b>.</p>
-            </div>`;
-
-        let sendResult;
         try {
-            sendResult = await resend.emails.send({
+            const sendResult = await resend.emails.send({
                 from: EMAIL_FROM,
                 to: email,
                 subject: "Код підтвердження | CertifyMe",
@@ -77,6 +78,12 @@ export async function sendEmailCode(req, res) {
             });
 
             console.log("✅ Лист відправлено через Resend:", sendResult?.id || sendResult);
+
+            return res.json({
+                success: true,
+                message: "Код надіслано ✅",
+                emailSendId: sendResult?.id,
+            });
         } catch (sendErr) {
             console.error("❌ Помилка Resend:", sendErr?.message || sendErr);
             return res.status(500).json({
@@ -85,17 +92,12 @@ export async function sendEmailCode(req, res) {
                 detail: sendErr?.message || sendErr,
             });
         }
-
-        res.json({
-            success: true,
-            message: "Код надіслано ✅",
-            emailSendId: sendResult?.id,
-        });
     } catch (err) {
         console.error("❌ sendEmailCode error:", err);
-        res
-            .status(500)
-            .json({ success: false, message: "Не вдалося надіслати код підтвердження" });
+        res.status(500).json({
+            success: false,
+            message: "Не вдалося надіслати код підтвердження",
+        });
     }
 }
 
@@ -103,35 +105,51 @@ export async function sendEmailCode(req, res) {
 export async function verifyEmailCode(req, res) {
     try {
         const token = req.headers.authorization?.split(" ")[1];
+        if (!token)
+            return res
+                .status(401)
+                .json({ success: false, message: "Немає токена авторизації" });
+
         const { id } = jwt.verify(token, process.env.JWT_SECRET);
         const { code } = req.body;
 
-        const result = await pool.query(
-            `SELECT * FROM email_verifications
-             WHERE user_id=$1 AND code=$2 AND used=FALSE
-               AND created_at > NOW() - INTERVAL '10 minutes'
-             ORDER BY created_at DESC LIMIT 1`,
-            [id, code]
-        );
+        // Знайти останній код, створений за 10 хвилин, ще не використаний
+        const record = await prisma.emailVerification.findFirst({
+            where: {
+                userId: id,
+                code,
+                used: false,
+                createdAt: { gt: new Date(Date.now() - 10 * 60 * 1000) },
+            },
+            orderBy: { createdAt: "desc" },
+        });
 
-        if (!result.rows.length) {
+        if (!record) {
             return res.status(400).json({
                 success: false,
                 message: "Невірний або прострочений код підтвердження",
             });
         }
 
-        await pool.query(
-            `UPDATE email_verifications SET used=TRUE WHERE id=$1`,
-            [result.rows[0].id]
-        );
-        await pool.query(`UPDATE users SET email_verified=TRUE WHERE id=$1`, [id]);
+        // Транзакція — позначаємо код використаним і підтверджуємо користувача
+        await prisma.$transaction(async (tx) => {
+            await tx.emailVerification.update({
+                where: { id: record.id },
+                data: { used: true },
+            });
+
+            await tx.user.update({
+                where: { id },
+                data: { emailVerified: true },
+            });
+        });
 
         res.json({ success: true, message: "Пошту успішно підтверджено 💚" });
     } catch (err) {
         console.error("❌ verifyEmailCode error:", err);
-        res
-            .status(500)
-            .json({ success: false, message: "Помилка при перевірці коду підтвердження" });
+        res.status(500).json({
+            success: false,
+            message: "Помилка при перевірці коду підтвердження",
+        });
     }
 }

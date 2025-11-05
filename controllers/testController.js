@@ -1,34 +1,27 @@
-import { pool } from "../config/db.js";
+//testController.js
+import prisma from "../config/prisma.js";
 import axios from "axios";
 import jwt from "jsonwebtoken";
 import fs from "fs";
 import path from "path";
-import PDFDocument from "pdfkit";
-import QRCode from "qrcode";
 import { checkAchievements } from "../utils/achievementEngine.js";
-// 🌍 Автоматичний переклад через безкоштовний Google Translate API
+import { generateCertificatePDF } from "../utils/certificateGenerator.js";
+// 🌍 Автоматичний переклад через Google Translate
 async function translateText(text, from = "uk", to = "en") {
-    if (!text || !text.trim()) return text;
+    if (!text?.trim()) return text;
     try {
-        const response = await axios.get("https://translate.googleapis.com/translate_a/single", {
-            params: {
-                client: "gtx",
-                sl: from,
-                tl: to,
-                dt: "t",
-                q: text,
-            },
+        const res = await axios.get("https://translate.googleapis.com/translate_a/single", {
+            params: { client: "gtx", sl: from, tl: to, dt: "t", q: text },
             timeout: 10000,
         });
-        const translated = response.data?.[0]?.[0]?.[0];
-        return translated || text;
+        return res.data?.[0]?.[0]?.[0] || text;
     } catch (err) {
-        console.error("❌ Помилка перекладу:", err.message);
+        console.error("❌ translateText error:", err.message);
         return text;
     }
 }
 
-// 🧩 Створення тесту з авто-перекладом
+// 🧩 Створення тесту
 export const createTest = async (req, res) => {
     try {
         let {
@@ -40,52 +33,55 @@ export const createTest = async (req, res) => {
             questions,
             title,
             description,
+            price_cents, // ✅ додано
+            currency,    // ✅ додано
         } = req.body;
 
+        // 🧠 Підстраховка для назв / описів
         title_ua = title_ua || title || "Без назви";
         description_ua = description_ua || description || "";
 
-        if (!title_en || !title_en.trim()) title_en = await translateText(title_ua);
-        if (!description_en || !description_en.trim())
-            description_en = await translateText(description_ua);
+        // 🌍 Автоматичний переклад, якщо англ. не заповнено
+        title_en = title_en?.trim() || (await translateText(title_ua));
+        description_en = description_en?.trim() || (await translateText(description_ua));
 
-        const testResult = await pool.query(
-            `INSERT INTO tests (title_ua, title_en, description_ua, description_en, image_url, created_at)
-             VALUES ($1,$2,$3,$4,$5,NOW()) RETURNING id`,
-            [title_ua, title_en, description_ua, description_en, image_url]
-        );
+        // 💾 Створення тесту
+        const test = await prisma.test.create({
+            data: {
+                titleUa: title_ua,
+                titleEn: title_en,
+                descriptionUa: description_ua,
+                descriptionEn: description_en,
+                imageUrl: image_url,
+                priceCents: Number(price_cents) || 0, // ✅ тепер працює
+                currency: currency || "usd",           // ✅ тепер зберігається
+                createdAt: new Date(),
+            },
+        });
 
-        const testId = testResult.rows[0].id;
-
-        if (questions && Array.isArray(questions)) {
+        // 🧩 Збереження питань та відповідей
+        if (Array.isArray(questions)) {
             for (const q of questions) {
-                const question_ua = q.question_ua || q.text || "";
-                const question_en =
-                    q.question_en && q.question_en.trim()
-                        ? q.question_en
-                        : await translateText(question_ua);
+                const questionUa = q.question_ua || q.text || "";
+                const questionEn = q.question_en?.trim() || (await translateText(questionUa));
 
-                const qRes = await pool.query(
-                    `INSERT INTO questions (test_id, question_ua, question_en)
-                     VALUES ($1,$2,$3) RETURNING id`,
-                    [testId, question_ua, question_en]
-                );
+                const question = await prisma.question.create({
+                    data: { testId: test.id, questionUa, questionEn },
+                });
 
-                const qId = qRes.rows[0].id;
-
-                if (q.answers && Array.isArray(q.answers)) {
+                if (Array.isArray(q.answers)) {
                     for (const a of q.answers) {
-                        const answer_ua = a.answer_ua || a.text || "";
-                        const answer_en =
-                            a.answer_en && a.answer_en.trim()
-                                ? a.answer_en
-                                : await translateText(answer_ua);
+                        const answerUa = a.answer_ua || a.text || "";
+                        const answerEn = a.answer_en?.trim() || (await translateText(answerUa));
 
-                        await pool.query(
-                            `INSERT INTO answers (question_id, answer_ua, answer_en, is_correct)
-                             VALUES ($1,$2,$3,$4)`,
-                            [qId, answer_ua, answer_en, a.is_correct || false]
-                        );
+                        await prisma.answer.create({
+                            data: {
+                                questionId: question.id,
+                                answerUa,
+                                answerEn,
+                                isCorrect: !!a.is_correct,
+                            },
+                        });
                     }
                 }
             }
@@ -98,51 +94,68 @@ export const createTest = async (req, res) => {
     }
 };
 
-// 📘 Отримати тест з усіма мовами (для адмінки)
+
+// 📘 Отримати тест з питаннями та відповідями
 export const getTestById = async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = Number(req.params.id);
+        const test = await prisma.test.findUnique({
+            where: { id },
+            select: {
+                id: true,
+                titleUa: true,
+                titleEn: true,
+                descriptionUa: true,
+                descriptionEn: true,
+                imageUrl: true,
+                priceCents: true,
+                currency: true,
+                questions: {
+                    select: {
+                        id: true,
+                        questionUa: true,
+                        questionEn: true,
+                        answers: {
+                            select: {
+                                id: true,
+                                answerUa: true,
+                                answerEn: true,
+                                isCorrect: true,
+                            },
+                            orderBy: { id: "asc" },
+                        },
+                    },
+                    orderBy: { id: "asc" },
+                },
+            },
+        });
 
-        const testRes = await pool.query(
-            `SELECT id, title_ua, title_en, description_ua, description_en, image_url, price_cents, currency
-             FROM tests WHERE id = $1`,
-            [id]
-        );
-
-        if (testRes.rows.length === 0)
+        if (!test)
             return res.status(404).json({ success: false, message: "Test not found" });
 
-        const test = testRes.rows[0];
-
-        // Завантажуємо питання для обох мов
-        const questionsRes = await pool.query(
-            `SELECT id, question_ua, question_en FROM questions WHERE test_id = $1 ORDER BY id ASC`,
-            [id]
-        );
-
-        const questions = [];
-
-        for (const q of questionsRes.rows) {
-            const answersRes = await pool.query(
-                `SELECT id, answer_ua, answer_en, is_correct
-                 FROM answers WHERE question_id = $1 ORDER BY id ASC`,
-                [q.id]
-            );
-
-            questions.push({
+        const formatted = {
+            id: test.id,
+            title_ua: test.titleUa,
+            title_en: test.titleEn,
+            description_ua: test.descriptionUa,
+            description_en: test.descriptionEn,
+            image_url: test.imageUrl,
+            price_cents: test.priceCents,
+            currency: test.currency,
+            questions: test.questions.map((q) => ({
                 id: q.id,
-                question_ua: q.question_ua,
-                question_en: q.question_en,
-                answers: answersRes.rows.map(a => ({
+                question_ua: q.questionUa,
+                question_en: q.questionEn,
+                answers: q.answers.map((a) => ({
                     id: a.id,
-                    answer_ua: a.answer_ua,
-                    answer_en: a.answer_en,
-                    is_correct: a.is_correct,
+                    answer_ua: a.answerUa,
+                    answer_en: a.answerEn,
+                    is_correct: a.isCorrect,
                 })),
-            });
-        }
+            })),
+        };
 
-        res.json({ success: true, test: { ...test, questions } });
+        res.json({ success: true, test: formatted });
     } catch (err) {
         console.error("❌ getTestById error:", err);
         res.status(500).json({ success: false, message: "Server error" });
@@ -151,485 +164,361 @@ export const getTestById = async (req, res) => {
 
 
 
-// 🧾 Генерація сертифіката з QR-кодом і двома мовами
+// 📜 Генерація або завантаження існуючого сертифіката
 export const generateCertificate = async (req, res) => {
     try {
         const token = req.headers.authorization?.split(" ")[1];
-        if (!token)
-            return res.status(401).json({ success: false, message: "No token provided" });
+        if (!token) return res.status(401).json({ success: false, message: "No token" });
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const userRes = await pool.query(
-            "SELECT first_name, last_name FROM users WHERE id = $1",
-            [decoded.id]
-        );
+        const user = await prisma.user.findUnique({ where: { id: decoded.id } });
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-        if (userRes.rows.length === 0)
-            return res.status(404).json({ success: false, message: "User not found" });
+        const { testId, score, total } = req.body;
+        if (!testId || score == null || total == null)
+            return res.status(400).json({ success: false, message: "Missing test data" });
 
-        const { test_id, test_title, score, total } = req.body;
+        const test = await prisma.test.findUnique({ where: { id: Number(testId) } });
+        if (!test) return res.status(404).json({ success: false, message: "Test not found" });
 
-        // ✅ Знаходимо назву тесту
-        let course_ua = test_title;
-        let course_en = test_title;
-        if (test_id) {
-            const testRes = await pool.query(
-                "SELECT title_ua, title_en FROM tests WHERE id = $1",
-                [test_id]
-            );
-            if (testRes.rows.length > 0) {
-                course_ua = testRes.rows[0].title_ua;
-                course_en = testRes.rows[0].title_en;
-            }
-        }
-
-        const fullName = `${userRes.rows[0].first_name} ${userRes.rows[0].last_name}`;
         const percent = Math.round((score / total) * 100);
 
-        // ✅ 1. Спочатку перевіримо, чи вже є сертифікат
-        const existingCert = await pool.query(
-            `SELECT * FROM certificates WHERE user_id = $1 AND test_id = $2 LIMIT 1`,
-            [decoded.id, test_id]
-        );
+        // 🔍 Перевірка: чи вже є сертифікат цього користувача за цей тест
+        let existingCert = await prisma.certificate.findFirst({
+            where: { userId: decoded.id, testId: test.id },
+        });
 
-        if (existingCert.rows.length > 0) {
-            const filePath = path.join("certificates", `certificate_${existingCert.rows[0].cert_id}.pdf`);
-            if (fs.existsSync(filePath)) {
-                console.log("📄 Returning existing certificate:", filePath);
-                return res.download(filePath);
+        if (existingCert) {
+            // 🧾 Якщо PDF уже згенерований — просто віддаємо файл
+            const existingPath = path.resolve(
+                "certificates",
+                `certificate_${existingCert.certId}.pdf`
+            );
+            if (fs.existsSync(existingPath)) {
+                console.log("📎 Returning existing certificate:", existingCert.certId);
+                return res.download(existingPath, `certificate_${existingCert.certId}.pdf`);
             }
+
+            // Якщо запис є, але PDF втрачено → згенеруємо заново
+            console.log("⚠️ PDF missing, regenerating...");
+            const pdfPath = await generateCertificatePDF(existingCert.certId);
+            await new Promise((r) => setTimeout(r, 200));
+            return res.download(pdfPath, `certificate_${existingCert.certId}.pdf`);
         }
 
-        // ✅ 2. Генеруємо новий сертифікат
+        // 🆕 Інакше створюємо новий сертифікат
         const certId = `C-UA-${Math.floor(100000 + Math.random() * 900000)}`;
-        const issued = new Date();
-        const expires = new Date();
-        expires.setFullYear(expires.getFullYear() + 1);
+        const certificate = await prisma.certificate.create({
+            data: {
+                certId,
+                userId: decoded.id,
+                userName: `${user.firstName} ${user.lastName}`,
+                userEmail: user.email,
+                testId: test.id,
+                course: test.titleUa,
+                courseEn: test.titleEn || test.titleUa,
+                issued: new Date(),
+                expires: new Date(new Date().setFullYear(new Date().getFullYear() + 1)),
+                percent,
+            },
+        });
 
-        // === QR-код ===
-        const verifyUrl = `http://localhost:5173/verify/${certId}`;
-        fs.mkdirSync("certificates", { recursive: true });
-        const qrPath = path.join("certificates", `qr_${certId}.png`);
-        await QRCode.toFile(qrPath, verifyUrl, { width: 180, color: { dark: "#00703C" } });
+        const pdfPath = await generateCertificatePDF(certId);
+        await new Promise((r) => setTimeout(r, 200));
 
-        // === Шрифти і файли ===
-        const fontPath = path.join("fonts", "OpenSans-Regular.ttf");
-        const filePath = path.join("certificates", `certificate_${certId}.pdf`);
-        const logoPath = path.join("assets", "logo.png");
-        const stampPath = path.join("assets", "stamp.png");
-
-        const doc = new PDFDocument({ size: "A4", margin: 40 });
-        if (fs.existsSync(fontPath)) {
-            doc.registerFont("ua", fontPath);
-            doc.font("ua");
-        }
-
-        const stream = fs.createWriteStream(filePath);
-        doc.pipe(stream);
-
-        // === Параметри сторінки ===
-        const PAGE_W = doc.page.width;
-        const PAGE_H = doc.page.height;
-        const MARGIN = 48;
-        const INNER_W = PAGE_W - MARGIN * 2;
-
-        // === Фон і рамка ===
-        doc.rect(0, 0, PAGE_W, PAGE_H).fill("#ffffff");
-        doc.save()
-            .lineWidth(6)
-            .strokeColor("#00703C")
-            .rect(MARGIN - 20, MARGIN - 20, PAGE_W - (MARGIN - 20) * 2, PAGE_H - (MARGIN - 20) * 2)
-            .stroke()
-            .restore();
-
-        // === Логотип ===
-        let cursorY = MARGIN + 16;
-        if (fs.existsSync(logoPath)) {
-            const LOGO_W = 72;
-            doc.image(logoPath, (PAGE_W - LOGO_W) / 2, cursorY, { width: LOGO_W });
-            cursorY += 72 + 14;
-        }
-
-        // === Заголовок ===
-        doc.fontSize(30).fillColor("#00703C")
-            .text("СЕРТИФІКАТ", MARGIN, cursorY, { width: INNER_W, align: "center" });
-        cursorY += 34;
-
-        doc.fontSize(12).fillColor("#555")
-            .text(`№: ${certId}`, MARGIN, cursorY, { width: INNER_W, align: "center" });
-        cursorY += 26;
-
-        // === Основний текст ===
-        doc.fontSize(14).fillColor("#000")
-            .text("Цей сертифікат засвідчує, що", MARGIN, cursorY, { width: INNER_W, align: "center" });
-        cursorY += 22;
-
-        doc.fontSize(20).fillColor("#00703C")
-            .text(fullName, MARGIN, cursorY, { width: INNER_W, align: "center" });
-        cursorY += 26;
-
-        doc.fontSize(14).fillColor("#000")
-            .text("успішно завершив(ла) курс:", MARGIN, cursorY, { width: INNER_W, align: "center" });
-        cursorY += 18;
-
-        doc.fontSize(16).fillColor("#00703C")
-            .text(`«${course_ua}»`, MARGIN, cursorY, { width: INNER_W, align: "center" });
-        cursorY += 22;
-
-        doc.fontSize(12).fillColor("#333")
-            .text(`Результат: ${score} з ${total} (${percent}%)`, MARGIN, cursorY, { width: INNER_W, align: "center" });
-        cursorY += 40;
-
-        // === Дати + підпис ===
-        const LEFT_X = MARGIN + 20;
-        const RIGHT_X = PAGE_W - MARGIN - 220;
-
-        doc.fontSize(12).fillColor("#000")
-            .text(`Виданий: ${issued.toLocaleDateString("uk-UA")}`, LEFT_X, PAGE_H - MARGIN - 160)
-            .text(`Діє до: ${expires.toLocaleDateString("uk-UA")}`, RIGHT_X, PAGE_H - MARGIN - 160);
-
-        doc.text("__________________", LEFT_X, PAGE_H - MARGIN - 110);
-        doc.text("Підпис викладача", LEFT_X + 5, PAGE_H - MARGIN - 92);
-
-        if (fs.existsSync(stampPath)) {
-            doc.image(stampPath, RIGHT_X, PAGE_H - MARGIN - 120, { width: 96 });
-        }
-
-        // === QR-код (піднято трохи вище, щоб не створювало другу сторінку) ===
-        const QR_W = 110;
-        const QR_X = PAGE_W - MARGIN - QR_W;
-        const QR_Y = PAGE_H - MARGIN - QR_W - 70;
-
-        if (fs.existsSync(qrPath)) {
-            doc.image(qrPath, QR_X, QR_Y, { width: QR_W });
-            doc.fontSize(10).fillColor("#555")
-                .text("Перевірити сертифікат:", QR_X - 10, QR_Y + QR_W + 4, { width: QR_W + 20, align: "center" })
-                .text(verifyUrl, QR_X - 20, QR_Y + QR_W + 18, { width: QR_W + 40, align: "center" });
-        }
-
-        // === Футер (піднятий вище) ===
-        doc.fontSize(10).fillColor("#00703C")
-            .text("CertifyMe © 2025", MARGIN, PAGE_H - MARGIN - 10, { width: INNER_W, align: "right" });
-
-        doc.end();
-
-        // === 🧾 Запис у БД ===
-        await pool.query(
-            `INSERT INTO certificates (cert_id, user_id, user_name, course, course_en, test_id, issued, expires, percent)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-            [certId, decoded.id, fullName, course_ua, course_en, test_id, issued, expires, percent]
-        );
-
-        stream.on("finish", () => res.download(filePath));
+        console.log("✅ New certificate created:", certId);
+        res.download(pdfPath, `certificate_${certId}.pdf`);
     } catch (err) {
         console.error("❌ generateCertificate error:", err);
+        res
+            .status(500)
+            .json({ success: false, message: "Certificate generation failed" });
+    }
+};
+
+
+
+// 💵 Курс USD→UAH
+async function getUsdToUahRate() {
+    try {
+        const r = await axios.get(
+            "https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?valcode=USD&json"
+        );
+        return r.data?.[0]?.rate || 42;
+    } catch {
+        return 42;
+    }
+}
+
+// 🗑️ Видалити тест
+export const deleteTest = async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+
+        await prisma.$transaction(async (tx) => {
+            // 1️⃣ Видаляємо доступи користувачів (user_tests)
+            await tx.userTest.deleteMany({ where: { testId: id } });
+
+            // 2️⃣ Видаляємо історію проходжень (user_test_history)
+            await tx.userTestHistory.deleteMany({ where: { testId: id } });
+
+            // 3️⃣ Видаляємо сертифікати
+            await tx.certificate.deleteMany({ where: { testId: id } });
+
+            // 4️⃣ Видаляємо платежі, якщо є
+            await tx.payment.deleteMany({ where: { testId: id } });
+
+            // 5️⃣ Видаляємо відповіді та питання
+            await tx.answer.deleteMany({ where: { question: { testId: id } } });
+            await tx.question.deleteMany({ where: { testId: id } });
+
+            // 6️⃣ Видаляємо сам тест
+            await tx.test.delete({ where: { id } });
+        });
+
+        res.json({ success: true, message: "🗑️ Тест успішно видалено" });
+    } catch (err) {
+        console.error("❌ deleteTest error:", err);
         res.status(500).json({
             success: false,
-            message: "Не вдалося створити сертифікат або QR-код.",
+            message: "Помилка при видаленні тесту",
+            error: err.message,
         });
     }
 };
 
 
-// 📈 Динамічний курс USD → UAH з API НБУ
-async function getUsdToUahRate() {
-    try {
-        const res = await axios.get(
-            "https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?valcode=USD&json"
-        );
-        const rate = res.data?.[0]?.rate;
-        console.log("💵 Курс НБУ USD→UAH:", rate);
-        return rate || 42;
-    } catch (err) {
-        console.error("⚠️ Не вдалося отримати курс НБУ:", err.message);
-        return 42; // fallback
-    }
-}
-
-
-// 🗑️ Видалити тест
-export const deleteTest = async (req, res) => {
-    try {
-        const { id } = req.params;
-        await pool.query(
-            `DELETE FROM answers WHERE question_id IN (SELECT id FROM questions WHERE test_id = $1)`,
-            [id]
-        );
-        await pool.query(`DELETE FROM questions WHERE test_id = $1`, [id]);
-        await pool.query(`DELETE FROM tests WHERE id = $1`, [id]);
-        res.json({ success: true, message: "🗑️ Тест видалено успішно" });
-    } catch (err) {
-        console.error("❌ deleteTest error:", err);
-        res.status(500).json({ success: false, message: "Server error" });
-    }
-};
-
-// 🧩 Отримати всі тести з урахуванням мови
+// 🧩 Усі тести
 export const getAllTests = async (req, res) => {
     try {
         const lang = req.query.lang === "en" ? "en" : "ua";
         const rate = await getUsdToUahRate();
 
-        const titleField = lang === "en" ? "title_en" : "title_ua";
-        const descField = lang === "en" ? "description_en" : "description_ua";
-
-        const result = await pool.query(`
-            SELECT id, ${titleField} AS title, ${descField} AS description,
-                   image_url, price_cents, currency, created_at
-            FROM tests
-            ORDER BY id ASC
-        `);
-
-        // 💰 додаємо поле для відображення ціни в гривнях
-        const tests = result.rows.map(t => ({
-            ...t,
-            price_uah: Math.round((t.price_cents / 100) * rate),
+        const tests = await prisma.test.findMany({ orderBy: { id: "asc" } });
+        const result = tests.map((t) => ({
+            id: t.id,
+            title: lang === "en" ? t.titleEn : t.titleUa,
+            description: lang === "en" ? t.descriptionEn : t.descriptionUa,
+            image_url: t.imageUrl,
+            price_cents: t.priceCents,
+            currency: t.currency,
+            created_at: t.createdAt,
+            price_uah: Math.round(((t.priceCents || 0) / 100) * rate),
         }));
-
-        res.json({ success: true, tests, lang, rate });
+        res.json({ success: true, tests: result, lang, rate });
     } catch (err) {
         console.error("❌ getAllTests error:", err);
-        res.status(500).json({ success: false, message: "Server error" });
+        res.status(500).json({ success: false });
     }
 };
 
-
-
-// ✏️ Оновити тест
+// ✏️ Оновлення тесту
 export const updateTest = async (req, res) => {
     try {
-        const { id } = req.params;
-        const {
-            title_ua,
-            title_en,
-            description_ua,
-            description_en,
-            image_url,
-            price_amount,
-            currency,
-        } = req.body;
-
-        // 🔹 Підвантажуємо курс з НБУ
+        const id = Number(req.params.id);
+        const { title_ua, title_en, description_ua, description_en, image_url, price_amount, currency } =
+            req.body;
         const rate = await getUsdToUahRate();
-
-        const tUa = title_ua || "Без назви";
-        const tEn = title_en || tUa;
-        const dUa = description_ua || "";
-        const dEn = description_en || dUa;
 
         let newCurrency = (currency || "usd").toLowerCase();
         let priceCents = 0;
-
-        // 💵 Конвертація ціни
         if (!isNaN(price_amount)) {
-            if (newCurrency === "usd") {
-                // якщо ціна в доларах
-                priceCents = Math.round(price_amount * 100);
-            } else if (newCurrency === "uah") {
-                // якщо ціна в гривнях → переводимо в USD і зберігаємо у центах
-                const usdValue = price_amount / rate;
-                priceCents = Math.round(usdValue * 100);
-                newCurrency = "usd"; // у БД зберігаємо тільки USD
+            if (newCurrency === "usd") priceCents = Math.round(price_amount * 100);
+            else if (newCurrency === "uah") {
+                const usd = price_amount / rate;
+                priceCents = Math.round(usd * 100);
+                newCurrency = "usd";
             }
         }
 
-        // 🧩 Оновлення тесту
-        const result = await pool.query(
-            `UPDATE tests
-             SET title_ua=$1, title_en=$2, description_ua=$3, description_en=$4,
-                 image_url=$5, price_cents=$6, currency=$7
-             WHERE id=$8 RETURNING *`,
-            [tUa, tEn, dUa, dEn, image_url, priceCents, "usd", id]
-        );
-
-        if (result.rows.length === 0)
-            return res
-                .status(404)
-                .json({ success: false, message: "❌ Тест не знайдено" });
-
-        res.json({
-            success: true,
-            message: "✅ Тест оновлено",
-            test: result.rows[0],
+        const updated = await prisma.test.update({
+            where: { id },
+            data: {
+                titleUa: title_ua || "Без назви",
+                titleEn: title_en || title_ua,
+                descriptionUa: description_ua || "",
+                descriptionEn: description_en || description_ua,
+                imageUrl: image_url,
+                priceCents,
+                currency: newCurrency,
+            },
         });
+
+        res.json({ success: true, message: "✅ Тест оновлено", test: updated });
     } catch (err) {
         console.error("❌ updateTest error:", err);
-        res.status(500).json({ success: false, message: "Server error" });
+        res.status(500).json({ success: false });
     }
 };
 
-
-
-// 📜 Перевірка сертифіката за QR-кодом
+// 📜 Перевірка сертифіката
 export const verifyCertificate = async (req, res) => {
     try {
-        const { cert_id } = req.params;
-        const result = await pool.query(
-            `SELECT c.*, json_build_object('id', u.id, 'name', COALESCE(u.first_name || ' ' || u.last_name, c.user_name), 'email', COALESCE(u.email, c.user_email, '-')) AS "user"
-             FROM certificates c
-                      LEFT JOIN users u ON u.id = c.user_id
-             WHERE c.cert_id = $1`,
-            [cert_id]
-        );
+        const cert = await prisma.certificate.findUnique({
+            where: { certId: req.params.cert_id },
+            include: { user: true },
+        });
+        if (!cert)
+            return res.status(404).json({ success: false, message: "❌ Сертифікат не знайдено" });
 
-        if (result.rows.length === 0)
-            return res.status(404).json({
-                success: false,
-                message: "❌ Сертифікат не знайдено або недійсний",
-            });
-
-        const cert = result.rows[0];
-        const now = new Date();
-        const isExpired = now > new Date(cert.expires);
-
+        const expired = new Date() > cert.expires;
         res.json({
             success: true,
-            valid: !isExpired,
-            id: cert.cert_id,
-            name: (cert.user && cert.user.name) || cert.user_name,
-            user: cert.user || null,
+            valid: !expired,
+            id: cert.certId,
+            name: cert.user
+                ? `${cert.user.firstName} ${cert.user.lastName}`
+                : cert.userName,
             course: cert.course,
             issued: new Date(cert.issued).toLocaleDateString("uk-UA"),
             expires: new Date(cert.expires).toLocaleDateString("uk-UA"),
             percent: cert.percent,
-            status: isExpired ? "Сертифікат прострочений" : "Дійсний сертифікат ✅",
+            status: expired ? "Сертифікат прострочений" : "Дійсний сертифікат ✅",
         });
     } catch (err) {
         console.error("❌ verifyCertificate error:", err);
-        res.status(500).json({
-            success: false,
-            message: "Помилка сервера при перевірці сертифіката",
-        });
+        res.status(500).json({ success: false });
     }
 };
-// 📜 Отримати всі сертифікати користувача
+
+// 📜 Усі сертифікати користувача
 export const getUserCertificates = async (req, res) => {
     try {
         const token = req.headers.authorization?.split(" ")[1];
-        if (!token)
-            return res.status(401).json({ success: false, message: "Неавторизовано" });
-
+        if (!token) return res.status(401).json({ success: false, message: "Неавторизовано" });
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        const result = await pool.query(
-            `
-                SELECT
-                    c.cert_id,
-                    c.user_id,
-                    c.test_id,
-                    c.issued,
-                    c.expires,
-                    c.percent,
-                    COALESCE(t.title_ua, c.course) AS course_ua,
-                    COALESCE(t.title_en, c.course) AS course_en,
-                    json_build_object(
-                            'id', u.id,
-                            'name', COALESCE(u.first_name || ' ' || u.last_name, c.user_name),
-                            'email', COALESCE(u.email, c.user_email, '-')
-                    ) AS "user"
-                FROM certificates c
-                         LEFT JOIN users u ON u.id = c.user_id
-                         LEFT JOIN tests t ON t.id = c.test_id
-                WHERE c.user_id = $1 OR c.user_name ILIKE $2
-                ORDER BY c.issued DESC;
-            `,
-            [decoded.id, `%${decoded.first_name || ''}%`]
-        );
+        const certs = await prisma.certificate.findMany({
+            where: { userId: decoded.id },
+            include: {
+                user: true,
+                test: true,
+            },
+            orderBy: { issued: "desc" },
+        });
 
-        res.json({ success: true, certificates: result.rows });
+        const result = certs.map((c) => ({
+            cert_id: c.certId,
+            user_id: c.userId,
+            test_id: c.testId,
+            issued: c.issued,
+            expires: c.expires,
+            percent: c.percent,
+            course_ua: c.test?.titleUa || c.course,
+            course_en: c.test?.titleEn || c.course,
+            user: {
+                id: c.user?.id,
+                name: `${c.user?.firstName || ""} ${c.user?.lastName || ""}`.trim(),
+                email: c.user?.email || c.userEmail || "-",
+            },
+        }));
+
+        res.json({ success: true, certificates: result });
     } catch (err) {
         console.error("❌ getUserCertificates error:", err);
-        res.status(500).json({
-            success: false,
-            message: "Помилка при завантаженні сертифікатів",
-        });
+        res.status(500).json({ success: false });
     }
 };
-// 🧩 Збереження результату після проходження тесту
+
+// 🧩 Збереження результату тесту
 export const saveTestResult = async (req, res) => {
     try {
+        console.log("📥 Test result received:", { body: req.body, user: req.user });
+
         const userId = req.user.id;
         const { testId, score, total } = req.body;
+        if (!testId || score == null || total == null)
+            return res.status(400).json({ success: false, message: "Invalid data" });
 
-        if (!testId || score == null || total == null) {
-            return res
-                .status(400)
-                .json({ success: false, message: "Invalid test result data" });
-        }
+        const passed = score >= total * 0.6;
+        await prisma.userTestHistory.create({
+            data: { userId, testId: Number(testId), score, total, passed },
+        });
 
-        const passed = score >= total * 0.6; // мінімум 60%
-
-        // 🧾 Зберігаємо історію проходження
-        await pool.query(
-            `INSERT INTO user_test_history (user_id, test_id, score, total, passed)
-       VALUES ($1, $2, $3, $4, $5)`,
-            [userId, testId, score, total, passed]
-        );
-
-        // 📊 Отримуємо поточну статистику користувача
-        const [testsRes, certsRes] = await Promise.all([
-            pool.query(
-                `SELECT COUNT(*) AS count FROM user_test_history WHERE user_id = $1 AND passed = true`,
-                [userId]
-            ),
-            pool.query(
-                `SELECT COUNT(*) AS count FROM certificates WHERE user_id = $1`,
-                [userId]
-            ),
+        const [testsPassed, certCount] = await Promise.all([
+            prisma.userTestHistory.count({ where: { userId, passed: true } }),
+            prisma.certificate.count({ where: { userId } }),
         ]);
 
-        const totalPassedTests = parseInt(testsRes.rows[0].count);
-        const totalCertificates = parseInt(certsRes.rows[0].count);
-        const averageScore = (score / total) * 100;
-
-        console.log(`📊 User ${userId}: tests=${totalPassedTests}, certs=${totalCertificates}, avgScore=${averageScore}`);
-
-        // 🏆 Перевіряємо досягнення
         const newAchievements = await checkAchievements({
             id: userId,
-            testsPassed: totalPassedTests,
-            certificates: totalCertificates,
-            score: averageScore,
+            testsPassed,
+            certificates: certCount,
+            score: (score / total) * 100,
         });
 
-        if (newAchievements.length > 0) {
-            console.log(`🏅 ${newAchievements.length} new achievements for user ${userId}`);
-        } else {
-            console.log(`ℹ️ No new achievements for user ${userId}`);
-        }
-
-        // 🔁 Відповідь на фронт
-        res.json({
-            success: true,
-            newAchievements, // список нових досягнень (може бути порожнім)
-        });
+        res.json({ success: true, newAchievements });
     } catch (err) {
         console.error("❌ saveTestResult error:", err);
+        res.status(500).json({ success: false });
+    }
+};
+
+// 🧩 Пройдені тести користувача
+export const getUserPassedTests = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const history = await prisma.userTestHistory.findMany({
+            where: { userId },
+            include: { test: true },
+            orderBy: { createdAt: "desc" },
+        });
+
+        const tests = history.map((h) => ({
+            ...h,
+            title_ua: h.test?.titleUa,
+            title_en: h.test?.titleEn,
+            image_url: h.test?.imageUrl,
+        }));
+
+        res.json({ success: true, tests });
+    } catch (err) {
+        console.error("❌ getUserPassedTests error:", err);
+        res.status(500).json({ success: false });
+    }
+};
+export const getUserTestResult = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const testId = Number(req.params.testId);
+
+        const attempt = await prisma.userTestHistory.findFirst({
+            where: { userId, testId },
+            orderBy: { createdAt: "desc" }, // ✅ правильне поле
+            include: {
+                test: {
+                    select: {
+                        id: true,
+                        titleUa: true,
+                        titleEn: true,
+                        descriptionUa: true,
+                        descriptionEn: true,
+                    },
+                },
+            },
+        });
+
+        if (!attempt)
+            return res
+                .status(404)
+                .json({ success: false, message: "Result not found" });
+
+        res.json({
+            success: true,
+            result: {
+                id: attempt.testId,
+                score: attempt.score,
+                total: attempt.total,
+                passed: attempt.passed,
+                created_at: attempt.createdAt, // ✅ лишаємо camelCase з Prisma
+                title_ua: attempt.test.titleUa,
+                title_en: attempt.test.titleEn,
+            },
+        });
+    } catch (err) {
+        console.error("❌ getUserTestResult error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
 
-
-
-// 🧩 Отримати пройдені тести користувача
-export const getUserPassedTests = async (req, res) => {
-    try {
-        const userId = req.user.id;
-
-        const result = await pool.query(
-            `SELECT h.*, t.title_ua, t.title_en, t.image_url
-             FROM user_test_history h
-                      JOIN tests t ON h.test_id = t.id
-             WHERE h.user_id = $1
-             ORDER BY h.created_at DESC`,
-            [userId]
-        );
-
-
-        res.json({ success: true, tests: result.rows });
-    } catch (err) {
-        console.error("❌ getUserPassedTests:", err);
-        res.status(500).json({ success: false });
-    }
-};

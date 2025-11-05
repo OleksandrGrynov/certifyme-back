@@ -1,0 +1,339 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                 Int                 @id @default(autoincrement())
+  firstName          String              @map("first_name")
+  lastName           String              @map("last_name")
+  email              String              @unique
+  password           String?
+  role               String
+  createdAt          DateTime            @default(now()) @map("created_at")
+  isVerified         Boolean             @default(false) @map("is_verified")
+  isGoogleUser       Boolean             @default(false) @map("is_google_user")
+
+  otpCode            String?             @map("otp_code")
+  otpExpires         DateTime?           @map("otp_expires")
+  resetToken         String?             @map("reset_token")
+  resetExpires       DateTime?           @map("reset_expires")
+  certificates       Certificate[]
+  contacts           Contact[]
+  donations          Donation[]
+  emailVerifications EmailVerification[]
+  payments           Payment[]
+  reviews            Review[]
+  smsSubscriptions   SmsSubscription[]
+  testAttempts       TestAttempt[]
+  userAchievements   UserAchievement[]
+  userTestHistory    UserTestHistory[]
+  userTests          UserTest[]
+
+  @@index([createdAt], map: "idx_users_created_at")
+  @@map("users")
+}
+
+model Test {
+  id            Int               @id @default(autoincrement())
+  titleUa       String            @map("title_ua")
+  titleEn       String?           @map("title_en")
+  descriptionUa String?           @map("description_ua")
+  descriptionEn String?           @map("description_en")
+  imageUrl      String?           @map("image_url")
+  priceCents    Int?              @map("price_cents")
+  currency      String?
+  createdAt     DateTime          @default(now()) @map("created_at")
+  certificates  Certificate[]
+  payments      Payment[]
+  questions     Question[]
+  reviews       Review[]
+  attempts      TestAttempt[]
+  histories     UserTestHistory[]
+  userTests     UserTest[]
+
+  @@map("tests")
+}
+
+model Question {
+  id         Int      @id @default(autoincrement())
+  testId     Int      @map("test_id")
+  questionUa String   @map("question_ua")
+  questionEn String?  @map("question_en")
+  answers    Answer[]
+  test       Test     @relation(fields: [testId], references: [id])
+
+  @@map("questions")
+}
+
+model Answer {
+  id         Int      @id @default(autoincrement())
+  questionId Int      @map("question_id")
+  answerUa   String   @map("answer_ua")
+  answerEn   String?  @map("answer_en")
+  isCorrect  Boolean  @default(false) @map("is_correct")
+  question   Question @relation(fields: [questionId], references: [id])
+
+  @@map("answers")
+}
+
+model Certificate {
+  id        Int      @id @default(autoincrement())
+  certId    String   @unique @map("cert_id")
+  userId    Int?     @map("user_id")
+  userName  String?  @map("user_name")
+  userEmail String?  @map("user_email")
+  course    String
+  courseEn  String?  @map("course_en")
+  testId    Int?     @map("test_id")
+  issued    DateTime
+  expires   DateTime
+  percent   Int
+  test      Test?    @relation(fields: [testId], references: [id])
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([issued], map: "idx_certificates_issued")
+  @@index([userId], map: "idx_certificates_user_id")
+  @@map("certificates")
+}
+
+model Payment {
+  id              Int       @id @default(autoincrement())
+  userId          Int       @map("user_id")
+  testId          Int       @map("test_id")
+  amountCents     Int       @map("amount_cents")
+  currency        String
+  status          String
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime? @map("updated_at")
+  stripeSessionId String?   @map("stripe_session_id")
+  test            Test      @relation(fields: [testId], references: [id])
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+model UserTest {
+  userId     Int      @map("user_id")
+  testId     Int      @map("test_id")
+  isUnlocked Boolean  @default(false) @map("is_unlocked")
+  grantedAt  DateTime @default(now()) @map("granted_at")
+  test       Test     @relation(fields: [testId], references: [id])
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, testId])
+  @@map("user_tests")
+}
+
+model UserTestHistory {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  testId    Int      @map("test_id")
+  score     Int
+  total     Int
+  passed    Boolean
+  createdAt DateTime @default(now()) @map("created_at")
+  test      Test     @relation(fields: [testId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_test_history")
+}
+
+model Achievement {
+  id             Int               @id @default(autoincrement())
+  code           String?           @unique
+  titleUa        String            @map("title_ua")
+  titleEn        String?           @map("title_en")
+  descriptionUa  String?           @map("description_ua")
+  descriptionEn  String?           @map("description_en")
+  category       String
+  icon           String?
+  conditionType  String?           @map("condition_type")
+  conditionValue Int?              @map("condition_value")
+  // extra fields used by adminAchievementController (raw SQL)
+  imageUrl       String?           @map("image_url")
+  triggerText    String?           @map("trigger_text")
+  generatedCode  String?           @map("generated_code")
+  users          UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  userId        Int         @map("user_id")
+  achievementId Int         @map("achievement_id")
+  progress      Int         @default(0)
+  achieved      Boolean     @default(false)
+  achievedAt    DateTime?   @map("achieved_at")
+  shown         Boolean     @default(false)
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, achievementId])
+  @@map("user_achievements")
+}
+
+model EmailVerification {
+  id        Int      @id @default(autoincrement())
+  userId    Int?     @map("user_id")
+  email     String
+  code      String
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("email_verifications")
+}
+
+model Review {
+  id        Int      @id @default(autoincrement())
+  userId    Int?     @map("user_id")
+  testId    Int?     @map("test_id")
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  test      Test?    @relation(fields: [testId], references: [id])
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("reviews")
+}
+
+model Contact {
+  id        Int      @id @default(autoincrement())
+  userId    Int?     @map("user_id")
+  name      String?
+  email     String
+  // added fields used by ContactModel raw SQL
+  phone     String?
+  telegram  String?
+  agree     Boolean? @default(false)
+  message   String
+  status    String   @default("new")
+  created_at DateTime @map("created_at") @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("contacts")
+}
+
+model TestAttempt {
+  id            Int      @id @default(autoincrement())
+  userId        Int      @map("user_id")
+  testId        Int      @map("test_id")
+  score         Float?
+  passThreshold Int?     @map("pass_threshold")
+  createdAt     DateTime @default(now()) @map("created_at")
+  test          Test     @relation(fields: [testId], references: [id])
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt], map: "idx_test_attempts_created_at")
+  @@index([testId], map: "idx_test_attempts_test_id")
+  @@index([userId], map: "idx_test_attempts_user_id")
+  @@map("test_attempts")
+}
+
+model AnalyticsDaily {
+  date          DateTime @id
+  registrations Int      @default(0)
+  tests         Int      @default(0)
+  avgScore      Float    @default(0) @map("avg_score")
+  certificates  Int      @default(0)
+  passRate      Float    @default(0) @map("pass_rate")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([date], map: "idx_analytics_daily_date")
+  @@map("analytics_daily")
+}
+
+model Event {
+  id          BigInt   @id @default(autoincrement())
+  userId      BigInt?
+  type        String
+  description String?
+  meta        Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("events")
+}
+
+model AdminAudit {
+  id         BigInt   @id @default(autoincrement())
+  adminId    BigInt   @map("admin_id")
+  endpoint   String
+  method     String
+  params     Json?
+  ip         String?
+  userAgent  String?  @map("user_agent")
+  durationMs Int?     @map("duration_ms")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("admin_audit")
+}
+
+model Donation {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  amount    Int
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("donations")
+}
+
+model SmsSubscription {
+  id        Int      @id @default(autoincrement())
+  userId    Int?     @map("user_id")
+  phone     String   @unique(map: "idx_sms_subscriptions_phone")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_sms_subscriptions_user_id")
+  @@map("sms_subscriptions")
+}
+
+model PaymentArchive {
+  id        Int       @id @default(autoincrement())
+  userId    Int?      @map("user_id")
+  userEmail String?   @map("user_email") @db.VarChar(255)
+  userName  String?   @map("user_name") @db.VarChar(255)
+  amountUsd Decimal?  @map("amount_usd") @db.Decimal(10, 2)
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@map("payment_archive")
+}
+
+// Additional tables referenced by raw SQL code
+model Explanation {
+  id             Int      @id @default(autoincrement())
+  questionTextUa String   @map("question_text_ua")
+  questionTextEn String?  @map("question_text_en")
+  explanationUa  String   @map("explanation_ua")
+  explanationEn  String?  @map("explanation_en")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([questionTextUa])
+  @@map("explanations")
+}
+
+model Course {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?
+  category    String?
+  teacher     String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("courses")
+}
+
+model Setting {
+  id           Int     @id
+  emailSupport String? @map("email_support")
+  telegram     String?
+  phone        String?
+
+  @@map("settings")
+}

@@ -1,56 +1,79 @@
+// server.js
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
-import { pool } from "./config/db.js";
+import path from "path";
+
 import authMiddleware, { isAdmin } from "./middleware/authMiddleware.js";
 
+// 📦 Імпорти роутів
+import testRoutes from "./routes/testRoutes.js";
 import achievementRoutes from "./routes/achievementRoutes.js";
-import googleAuthRoutes from "./routes/googleAuthRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
+import userTestsRoutes from "./routes/userTestsRoutes.js";
+import paymentRoutes from "./routes/paymentRoutes.js";
+import adminRoutes from "./routes/adminRoutes.js";
+import adminAnalyticsRoutes from "./routes/adminAnalyticsRoutes.js";
+import adminAchievementsRouter from "./routes/adminAchievements.js";
+import googleAuthRoutes from "./routes/googleAuthRoutes.js";
+import emailRoutes from "./routes/emailRoutes.js";
 import reviewRoutes from "./routes/reviewRoutes.js";
 import contactRoutes from "./routes/contactRoutes.js";
-import adminRoutes from "./routes/adminRoutes.js";
-import testRoutes from "./routes/testRoutes.js";
-import emailRoutes from "./routes/emailRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
-import adminAnalyticsRoutes from "./routes/adminAnalyticsRoutes.js";
 import analyticsRoutes from "./routes/analyticsRoutes.js";
-import paymentRoutes from "./routes/paymentRoutes.js";
-import userTestsRoutes from "./routes/userTestsRoutes.js";
 import certificateRoutes from "./routes/certificateRoutes.js";
-import adminAchievementsRouter from "./routes/adminAchievements.js";
 import smsRoutes from "./routes/smsRoutes.js";
 
-import path from "path";
+// 📨 ВАЖЛИВО: імпортуємо webhook-контролер, щоб зареєструвати raw-маршрут ДО express.json()
+import { stripeWebhook } from "./controllers/paymentController.js";
 
 dotenv.config();
 
 const app = express();
 
-app.use(cors({ origin: "http://localhost:5173", credentials: true }));
+// ⚙️ CORS
+app.use(cors({
+    origin: process.env.FRONTEND_URL,
+    credentials: true,
+}));
+
+// 📨 Stripe Webhook має бачити сире тіло (Buffer)!
+// ТОМУ цей маршрут реєструємо ДО app.use(express.json())
+app.post("/api/payments/webhook", express.raw({ type: "application/json" }), stripeWebhook);
+
+// Далі можна парсити JSON для всіх звичайних API
 app.use(express.json());
 app.use(cookieParser());
 
-app.use("/api/auth", googleAuthRoutes);
+// 🧩 Основні API-розділи (у правильному порядку)
 app.use("/api/tests", testRoutes);
+app.use("/api/achievements", achievementRoutes);
+app.use("/api/payments", paymentRoutes); // тут БІЛЬШЕ НЕ оголошуємо /webhook!
+app.use("/api/user", userTestsRoutes);
 app.use("/api/users", userRoutes);
-app.use("/api/reviews", reviewRoutes);
-app.use("/api/contacts", contactRoutes);
+
+// 🛠️ Адмінка
 app.use("/api/admin", adminRoutes);
 app.use("/api/admin", adminAnalyticsRoutes);
-app.use("/api/achievements", achievementRoutes);
+app.use("/api/admin/achievements", authMiddleware, isAdmin, adminAchievementsRouter);
+
+// 💬 Інші
+app.use("/api/auth", googleAuthRoutes);
 app.use("/api/auth", emailRoutes);
+app.use("/api/reviews", reviewRoutes);
+app.use("/api/contacts", contactRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/analytics", analyticsRoutes);
-app.use("/api/payments", paymentRoutes);
-app.use("/api/user", userTestsRoutes);
+app.use("/api/sms", smsRoutes);
+
+// 📄 Сертифікати (статичні PDF + API)
 app.use("/certificates", express.static(path.join(process.cwd(), "certificates")));
 app.use("/api/certificates", certificateRoutes);
-app.use("/api/admin/achievements", authMiddleware, isAdmin, adminAchievementsRouter);
-app.use("/api/sms", smsRoutes);
+
+// 🏠 Головна
 app.get("/", (req, res) => {
-    res.send("🎓 CertifyMe API running (local mode, no webhook)");
+    res.send("🎓 CertifyMe API running (webhook mode ready)");
 });
 
 const PORT = process.env.PORT || 5000;

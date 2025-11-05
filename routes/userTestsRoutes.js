@@ -1,49 +1,89 @@
 import express from "express";
 import authMiddleware from "../middleware/authMiddleware.js";
-import { pool } from "../config/db.js";
+import prisma from "../config/prisma.js";
 
 const router = express.Router();
 
+/* ────────────────────────────────────────────────────────────────
+   📘 GET /user/tests — усі тести, на які користувач має доступ
+   ──────────────────────────────────────────────────────────────── */
 router.get("/tests", authMiddleware, async (req, res) => {
     try {
-        const { rows } = await pool.query(
-            "SELECT test_id FROM user_tests WHERE user_id=$1",
-            [req.user.id]
-        );
-        res.json({ testIds: rows.map(r => r.test_id) });
+        const tests = await prisma.userTest.findMany({
+            where: { userId: req.user.id },
+            select: { testId: true },
+            orderBy: { grantedAt: "desc" },
+        });
+        res.json({ testIds: tests.map((t) => t.testId) });
     } catch (err) {
         console.error("❌ user/tests error:", err);
-        res.status(500).json({ message: "Помилка при отриманні тестів" });
+        res
+            .status(500)
+            .json({ success: false, message: "Помилка при отриманні тестів" });
     }
 });
 
+/* ────────────────────────────────────────────────────────────────
+   🔍 GET /user/tests/check/:testId — чи має користувач доступ
+   ──────────────────────────────────────────────────────────────── */
 router.get("/tests/check/:testId", authMiddleware, async (req, res) => {
     try {
-        const { testId } = req.params;
-        const result = await pool.query(
-            "SELECT 1 FROM user_tests WHERE user_id=$1 AND test_id=$2 LIMIT 1",
-            [req.user.id, testId]
-        );
-        res.json({ hasAccess: result.rowCount > 0 });
+        const testId = Number(req.params.testId);
+        if (isNaN(testId))
+            return res
+                .status(400)
+                .json({ success: false, message: "Invalid testId" });
+
+        const exists = await prisma.userTest.findUnique({
+            where: { userId_testId: { userId: req.user.id, testId } },
+            select: { userId: true },
+        });
+
+        res.json({ hasAccess: Boolean(exists) });
     } catch (err) {
         console.error("❌ check access error:", err);
-        res.status(500).json({ hasAccess: false });
+        res.status(500).json({ success: false, hasAccess: false });
     }
 });
 
+/* ────────────────────────────────────────────────────────────────
+   🟢 POST /user/tests/grant — надати користувачу доступ до тесту
+   ──────────────────────────────────────────────────────────────── */
+/* ────────────────────────────────────────────────────────────────
+   🟢 POST /user/tests/grant — надати користувачу доступ до тесту
+   ──────────────────────────────────────────────────────────────── */
 router.post("/tests/grant", authMiddleware, async (req, res) => {
     try {
         const { testId } = req.body;
+        const userId = req.user.id;
+
         if (!testId) {
-            return res.status(400).json({ success: false, message: "❌ testId required" });
+            return res
+                .status(400)
+                .json({ success: false, message: "❌ testId required" });
         }
 
-        const query = `
-            INSERT INTO user_tests (user_id, test_id, granted_at)
-            VALUES ($1, $2, NOW())
-            ON CONFLICT (user_id, test_id) DO NOTHING
-        `;
-        await pool.query(query, [req.user.id, testId]);
+        const existing = await prisma.userTest.findUnique({
+            where: { userId_testId: { userId, testId: Number(testId) } },
+        });
+
+        if (existing) {
+            // 🔁 якщо запис уже є — просто кажемо фронту, що все добре
+            return res.json({
+                success: true,
+                message: "⚠️ Access already granted",
+                alreadyGranted: true,
+            });
+        }
+
+        await prisma.userTest.create({
+            data: {
+                userId,
+                testId: Number(testId),
+                grantedAt: new Date(),
+                isUnlocked: true,
+            },
+        });
 
         res.json({ success: true, message: "✅ Access granted successfully" });
     } catch (err) {

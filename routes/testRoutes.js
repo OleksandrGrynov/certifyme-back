@@ -1,59 +1,127 @@
 import express from "express";
 import {
-    createTest, getAllTests, deleteTest, updateTest,
-    getTestById, generateCertificate, verifyCertificate,saveTestResult,getUserPassedTests
-
+    createTest,
+    getAllTests,
+    deleteTest,
+    updateTest,
+    getTestById,
+    generateCertificate,
+    verifyCertificate,
+    saveTestResult,
+    getUserPassedTests,
+    getUserCertificates,
+    getUserTestResult,
 } from "../controllers/testController.js";
+import fs from "fs";
+import path from "path";
 import authMiddleware, { isAdmin } from "../middleware/authMiddleware.js";
 import { explainOneQuestion } from "../controllers/explanationController.js";
-import { getUserCertificates } from "../controllers/testController.js";
-import { pool } from "../config/db.js";
+import prisma from "../config/prisma.js";
 
 const router = express.Router();
-
+router.get("/result/:testId", authMiddleware, getUserTestResult);
+/* ────────────────────────────────────────────────────────────────
+   📚 Публічні роути
+   ──────────────────────────────────────────────────────────────── */
 router.get("/", getAllTests);
-router.get("/user/certificates", authMiddleware, getUserCertificates);
 router.get("/certificates/:cert_id", verifyCertificate);
-router.get("/:id", getTestById);
 
+/* ────────────────────────────────────────────────────────────────
+   📜 Сертифікати користувача
+   ──────────────────────────────────────────────────────────────── */
+
+// 🔍 Перевірка чи вже існує PDF сертифікат користувача для тесту
+router.get("/certificate/check/:testId", authMiddleware, async (req, res) => {
+    try {
+        const testId = Number(req.params.testId);
+        const userId = req.user.id;
+
+        const cert = await prisma.certificate.findFirst({
+            where: { userId, testId },
+        });
+
+        if (!cert) {
+            return res
+                .status(404)
+                .json({ success: false, message: "Certificate not found" });
+        }
+
+        const filePath = path.resolve("certificates", `certificate_${cert.certId}.pdf`);
+
+        if (fs.existsSync(filePath)) {
+            console.log("📄 Found existing certificate:", cert.certId);
+            res.setHeader("Content-Type", "application/pdf");
+            return res.download(filePath);
+        }
+
+        return res.status(404).json({ success: false, message: "PDF file not found" });
+    } catch (err) {
+        console.error("❌ Error checking certificate:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+// 🧾 Генерація нового сертифіката
+router.post("/certificate", authMiddleware, generateCertificate);
+
+/* ────────────────────────────────────────────────────────────────
+   👤 Роути користувача
+   ──────────────────────────────────────────────────────────────── */
+router.get("/user/certificates", authMiddleware, getUserCertificates);
+router.get("/user/passed", authMiddleware, getUserPassedTests);
+router.post("/record", authMiddleware, saveTestResult);
+router.post("/explain-one", explainOneQuestion);
+
+/* ────────────────────────────────────────────────────────────────
+   🛠️ Адмінські CRUD-операції
+   ──────────────────────────────────────────────────────────────── */
 router.post("/", authMiddleware, isAdmin, createTest);
 router.put("/:id", authMiddleware, isAdmin, updateTest);
 router.delete("/:id", authMiddleware, isAdmin, deleteTest);
 
-router.post("/certificate", authMiddleware, generateCertificate);
-router.post("/record", authMiddleware, saveTestResult);
-router.get("/user/passed", authMiddleware, getUserPassedTests);
-router.post("/explain-one", explainOneQuestion);
+/* ────────────────────────────────────────────────────────────────
+   🧩 PUT /:id/questions — Повне оновлення питань тесту
+   ──────────────────────────────────────────────────────────────── */
 router.put("/:id/questions", authMiddleware, isAdmin, async (req, res) => {
-    const {id} = req.params;
-    const {questions} = req.body;
+    const { id } = req.params;
+    const { questions } = req.body;
 
     try {
-        await pool.query(
-            "DELETE FROM answers WHERE question_id IN (SELECT id FROM questions WHERE test_id = $1)",
-            [id]
-        );
-        await pool.query("DELETE FROM questions WHERE test_id = $1", [id]);
-
-        for (const q of questions) {
-            const qRes = await pool.query(
-                `INSERT INTO questions (test_id, question_ua, question_en)
-                 VALUES ($1, $2, $3) RETURNING id`,
-                [id, q.question_ua, q.question_en]
-            );
-
-            const questionId = qRes.rows[0].id;
-
-            for (const a of q.answers) {
-                await pool.query(
-                    `INSERT INTO answers (question_id, answer_ua, answer_en, is_correct)
-                     VALUES ($1, $2, $3, $4)`,
-                    [questionId, a.answer_ua, a.answer_en, a.is_correct]
-                );
-            }
+        const testId = Number(id);
+        if (!questions || !Array.isArray(questions)) {
+            return res
+                .status(400)
+                .json({ success: false, message: "Некоректний формат питань" });
         }
 
-        res.json({success: true, message: "✅ Питання оновлено успішно"});
+        await prisma.$transaction(async (tx) => {
+            await tx.answer.deleteMany({ where: { question: { testId } } });
+            await tx.question.deleteMany({ where: { testId } });
+
+            for (const q of questions) {
+                const newQ = await tx.question.create({
+                    data: {
+                        testId,
+                        questionUa: q.question_ua,
+                        questionEn: q.question_en,
+                    },
+                    select: { id: true },
+                });
+
+                if (Array.isArray(q.answers) && q.answers.length > 0) {
+                    await tx.answer.createMany({
+                        data: q.answers.map((a) => ({
+                            questionId: newQ.id,
+                            answerUa: a.answer_ua,
+                            answerEn: a.answer_en,
+                            isCorrect: Boolean(a.is_correct),
+                        })),
+                    });
+                }
+            }
+        });
+
+        res.json({ success: true, message: "✅ Питання оновлено успішно" });
     } catch (err) {
         console.error("❌ Помилка оновлення питань:", err);
         res.status(500).json({
@@ -62,4 +130,11 @@ router.put("/:id/questions", authMiddleware, isAdmin, async (req, res) => {
         });
     }
 });
+
+
+/* ────────────────────────────────────────────────────────────────
+   📘 Отримати тест за ID — завжди останній!
+   ──────────────────────────────────────────────────────────────── */
+router.get("/:id", getTestById);
+
 export default router;

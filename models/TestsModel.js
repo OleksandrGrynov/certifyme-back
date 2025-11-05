@@ -1,14 +1,27 @@
-import { pool } from '../config/db.js';
+import prisma from "../config/prisma.js";
 
+/**
+ * 📚 Отримати всі курси
+ */
 export const getAllCourses = async () => {
-    const { rows } = await pool.query('SELECT * FROM courses ORDER BY id ASC');
-    return rows;
+    const courses = await prisma.course.findMany({
+        orderBy: { id: "asc" },
+    });
+    return courses;
 };
 
+/**
+ * ➕ Створити новий курс
+ * @param {Object} data - дані курсу
+ */
 export const createCourse = async ({ title, description, category, teacher }) => {
-    const { rows } = await pool.query(
-        'INSERT INTO courses (title, description, category, teacher) VALUES ($1, $2, $3, $4) RETURNING *',
-        [title, description, category, teacher]
-    );
-    return rows[0];
+    const course = await prisma.course.create({
+        data: {
+            title,
+            description,
+            category,
+            teacher,
+        },
+    });
+    return course;
 };

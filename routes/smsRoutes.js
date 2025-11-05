@@ -1,9 +1,23 @@
 import express from "express";
 import { verifyToken, isAdmin } from "../middleware/authMiddleware.js";
-import { pool } from "../config/db.js";
+import prisma from "../config/prisma.js";
 import { sendSMS } from "../services/twilioService.js";
 
 const router = express.Router();
+
+/* ────────────────────────────────────────────────────────────────
+   🔧 Хелпер: нормалізація телефонів (універсально, UA-friendly)
+   ──────────────────────────────────────────────────────────────── */
+function normalizePhone(phone) {
+    if (!phone) return null;
+    const digits = phone.replace(/[^0-9]/g, "");
+    if (!digits) return null;
+    return digits.startsWith("380")
+        ? `+${digits}`
+        : digits.startsWith("+")
+            ? digits
+            : `+${digits}`;
+}
 
 /* ────────────────────────────────────────────────────────────────
    ✅ 1. Перевірка, чи користувач підписаний
@@ -11,14 +25,15 @@ const router = express.Router();
 router.get("/check", verifyToken, async (req, res) => {
     try {
         const userId = req.user.id;
-        const existing = await pool.query(
-            "SELECT * FROM sms_subscriptions WHERE user_id = $1 LIMIT 1",
-            [userId]
-        );
-        res.json({ subscribed: existing.rows.length > 0 });
+        const existing = await prisma.smsSubscription.findFirst({
+            where: { userId },
+        });
+        res.json({ subscribed: Boolean(existing) });
     } catch (err) {
         console.error("❌ Check SMS subscription error:", err);
-        res.status(500).json({ success: false, message: "Server error" });
+        res
+            .status(500)
+            .json({ success: false, message: "Server error while checking" });
     }
 });
 
@@ -28,22 +43,30 @@ router.get("/check", verifyToken, async (req, res) => {
 router.post("/subscribe", verifyToken, async (req, res) => {
     try {
         const userId = req.user.id;
-        const { phone } = req.body;
+        const rawPhone = req.body.phone;
+        const phone = normalizePhone(rawPhone);
 
         if (!phone)
-            return res.status(400).json({ success: false, message: "Phone required" });
+            return res
+                .status(400)
+                .json({ success: false, message: "Phone required" });
 
-        const existing = await pool.query(
-            "SELECT id FROM sms_subscriptions WHERE user_id = $1",
-            [userId]
-        );
-        if (existing.rows.length > 0)
-            return res.json({ success: true, message: "Already subscribed" });
+        // уникаємо дублікатів
+        const existing = await prisma.smsSubscription.findFirst({
+            where: {
+                OR: [{ userId }, { phone }],
+            },
+        });
 
-        await pool.query(
-            "INSERT INTO sms_subscriptions (user_id, phone) VALUES ($1, $2)",
-            [userId, phone]
-        );
+        if (existing)
+            return res.json({
+                success: true,
+                message: "Already subscribed",
+            });
+
+        await prisma.smsSubscription.create({
+            data: { userId, phone },
+        });
 
         res.json({ success: true, message: "Subscription saved" });
     } catch (err) {
@@ -58,36 +81,51 @@ router.post("/subscribe", verifyToken, async (req, res) => {
 router.post("/send-promo", verifyToken, isAdmin, async (req, res) => {
     try {
         const { message } = req.body;
-
         if (!message?.trim())
-            return res.status(400).json({ success: false, message: "Повідомлення не може бути порожнім" });
+            return res.status(400).json({
+                success: false,
+                message: "Повідомлення не може бути порожнім",
+            });
 
-        // Отримуємо всі номери з БД
-        const { rows: subs } = await pool.query("SELECT phone FROM sms_subscriptions");
-        if (subs.length === 0)
-            return res.json({ success: false, message: "Немає підписаних користувачів" });
+        // отримуємо унікальні телефони
+        const subs = await prisma.smsSubscription.findMany({
+            select: { phone: true },
+        });
+        if (!subs.length)
+            return res.json({
+                success: false,
+                message: "Немає підписаних користувачів",
+            });
 
-        let sentCount = 0;
-        for (const s of subs) {
-            const phone = s.phone.startsWith("+") ? s.phone : `+${s.phone}`;
+        const uniquePhones = [...new Set(subs.map((s) => normalizePhone(s.phone)))];
+
+        let sent = 0;
+        let failed = [];
+
+        for (const phone of uniquePhones) {
             const result = await sendSMS(phone, message);
-            if (result.success) sentCount++;
+            if (result?.success) sent++;
+            else failed.push(phone);
         }
 
         res.json({
             success: true,
-            message: `✅ Розсилка виконана: ${sentCount}/${subs.length} повідомлень`,
+            message: `✅ Розсилка виконана: ${sent}/${uniquePhones.length} повідомлень`,
+            failed: failed.length ? failed : undefined,
         });
     } catch (err) {
         console.error("❌ sendPromo error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
-// 🔢 Підрахунок кількості SMS-підписників
+
+/* ────────────────────────────────────────────────────────────────
+   🔢 4. Підрахунок кількості SMS-підписників
+   ──────────────────────────────────────────────────────────────── */
 router.get("/count", verifyToken, isAdmin, async (req, res) => {
     try {
-        const { rows } = await pool.query("SELECT COUNT(*) FROM sms_subscriptions");
-        res.json({ count: parseInt(rows[0].count, 10) });
+        const count = await prisma.smsSubscription.count();
+        res.json({ success: true, count });
     } catch (err) {
         console.error("❌ Count error:", err);
         res.status(500).json({ success: false, count: 0 });

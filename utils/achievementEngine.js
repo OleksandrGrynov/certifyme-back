@@ -1,121 +1,130 @@
-import { pool } from "../config/db.js";
+import prisma from "../config/prisma.js";
+import { updateAchievementsBatch } from "../models/AchievementModel.js";
 
 /**
- * Перевіряє всі досягнення користувача та повертає нові розблоковані
- * @param {Object} user - користувач (id, testsPassed, certificates, score, тощо)
- * @returns {Array} список нових досягнень [{ id, title_ua, title_en, category }]
+ * 🧠 Перевіряє всі умови досягнень і розблоковує ті, що користувач виконав
+ * Викликається після подій: тест, сертифікат, оплата тощо
  */
-export async function checkAchievements(user) {
-    try {
-        console.log("⚙️ checkAchievements() started for user:", user.id);
+export async function checkAchievements(userStats) {
+    const {
+        id: userId,
+        testsPassed = 0,
+        certificates = 0,
+        payments = 0,
+        score = 0,
+        avgScore = 0,
+        streakDays = 0,
+    } = userStats;
 
-        // --- 1. Збір статистики ---
-        const [testsPassedRes, certsRes, donationsRes, nightRes] = await Promise.all([
-            pool.query(`SELECT COUNT(*) FROM user_test_history WHERE user_id=$1 AND passed=true`, [user.id]),
-            pool.query(`SELECT COUNT(*) FROM certificates WHERE user_id=$1`, [user.id]),
-            pool.query(`SELECT COUNT(*) FROM donations WHERE user_id=$1`).catch(() => ({ rows: [{ count: 0 }] })),
-            pool.query(`
-                SELECT COUNT(*)
-                FROM user_test_history
-                WHERE user_id=$1
-                  AND EXTRACT(HOUR FROM created_at) BETWEEN 0 AND 5
-            `, [user.id]),
+    try {
+        // 🔹 1. Отримуємо всі досягнення та вже отримані користувачем
+        const [achievements, userAchievements] = await Promise.all([
+            prisma.achievement.findMany(),
+            prisma.userAchievement.findMany({
+                where: { userId, achieved: true },
+                select: { achievementId: true },
+            }),
         ]);
 
-        const testsPassed = parseInt(testsPassedRes.rows[0].count);
-        const certificates = parseInt(certsRes.rows[0].count);
-        const donations = parseInt(donationsRes.rows[0].count);
-        const nightTests = parseInt(nightRes.rows[0].count);
+        const alreadyUnlockedIds = new Set(
+            userAchievements.map((ua) => ua.achievementId)
+        );
 
-        // --- 2. Отримати всі досягнення ---
-        const { rows: achievements } = await pool.query(`SELECT * FROM achievements WHERE condition_type IS NOT NULL`);
+        const unlocked = [];
 
         for (const a of achievements) {
-            let progress = 0;
+            const { conditionType, conditionValue } = a;
+            if (!conditionType || !conditionValue) continue;
+
             let achieved = false;
 
-            switch (a.condition_type) {
-                case "tests_completed":
-                    progress = Math.min((testsPassed / a.condition_value) * 100, 100);
-                    achieved = testsPassed >= a.condition_value;
+            switch (conditionType) {
+                case "tests_passed":
+                    achieved = testsPassed >= conditionValue;
                     break;
-                case "certificates_earned":
-                    progress = Math.min((certificates / a.condition_value) * 100, 100);
-                    achieved = certificates >= a.condition_value;
+                case "certificates":
+                    achieved = certificates >= conditionValue;
                     break;
-                case "donations":
-                    progress = Math.min((donations / a.condition_value) * 100, 100);
-                    achieved = donations >= a.condition_value;
+                case "payments":
+                    achieved = payments >= conditionValue;
                     break;
-                case "night_tests":
-                    progress = Math.min((nightTests / a.condition_value) * 100, 100);
-                    achieved = nightTests >= a.condition_value;
+                case "score_avg":
+                    achieved = avgScore >= conditionValue;
                     break;
-                case "perfect_score":
-                    const scoreRes = await pool.query(
-                        `SELECT COUNT(*) FROM user_test_history WHERE user_id=$1 AND (score * 100 / total) >= 100`,
-                        [user.id]
-                    );
-                    achieved = parseInt(scoreRes.rows[0].count) > 0;
-                    progress = achieved ? 100 : 0;
+                case "streak_days":
+                    achieved = streakDays >= conditionValue;
                     break;
-                case "language_master":
-                    achieved = false;
-                    progress = 0;
-                    break;
-
-                case "holiday":
-                    achieved = true;
-                    progress = 100;
-                    break;
-                default:
-                    console.log("⚠️ Unknown condition:", a.condition_type);
             }
 
-            // --- 3. Вставка або оновлення ---
-            const exists = await pool.query(
-                `SELECT * FROM user_achievements WHERE user_id=$1 AND achievement_id=$2`,
-                [user.id, a.id]
-            );
-
-            if (exists.rows.length === 0) {
-                await pool.query(
-                    `INSERT INTO user_achievements (user_id, achievement_id, progress, achieved, achieved_at, shown)
-           VALUES ($1,$2,$3,$4,CASE WHEN $4=true THEN NOW() ELSE NULL END,false)`,
-                    [user.id, a.id, progress, achieved]
-                );
-            } else {
-                await pool.query(
-                    `UPDATE user_achievements
-             SET progress=$3, achieved=$4,
-                 achieved_at=CASE WHEN $4=true THEN NOW() ELSE achieved_at END
-           WHERE user_id=$1 AND achievement_id=$2`,
-                    [user.id, a.id, progress, achieved]
-                );
+            // 🔒 2. Якщо виконано, але ще не було отримано
+            if (achieved && !alreadyUnlockedIds.has(a.id)) {
+                unlocked.push({
+                    achievementId: a.id,
+                    code: a.code,
+                    progress: 100,
+                });
             }
         }
 
-        // --- 4. Знайти нові досягнення, які тільки-но досягнуті але ще не показані ---
-        const { rows: newAchievements } = await pool.query(`
-      SELECT a.id, a.title_ua, a.title_en
-      FROM user_achievements ua
-      JOIN achievements a ON ua.achievement_id = a.id
-      WHERE ua.user_id = $1 AND ua.achieved = true AND ua.shown = false
-    `, [user.id]);
-
-        if (newAchievements.length > 0) {
-            // 🔹 позначаємо як "показані"
-            await pool.query(
-                `UPDATE user_achievements SET shown = true
-         WHERE user_id = $1 AND achievement_id = ANY($2::int[])`,
-                [user.id, newAchievements.map(a => a.id)]
-            );
-            console.log(`🏆 Нові досягнення для користувача ${user.id}:`, newAchievements.map(a => a.title_ua));
+        // 🔄 3. Записуємо тільки нові досягнення
+        if (unlocked.length) {
+            for (const a of unlocked) {
+                await prisma.userAchievement.upsert({
+                    where: { userId_achievementId: { userId, achievementId: a.achievementId } },
+                    create: {
+                        userId,
+                        achievementId: a.achievementId,
+                        achieved: true,
+                        achievedAt: new Date(),
+                        progress: 100,
+                    },
+                    update: { achieved: true, achievedAt: new Date(), progress: 100 },
+                });
+            }
         }
 
-        return newAchievements; // повертаємо список нових
+        return unlocked; // тільки нові
     } catch (err) {
         console.error("❌ checkAchievements error:", err);
+        return [];
+    }
+}
+
+
+export async function triggerAchievementsCheck(userId) {
+    try {
+        const [testsPassed, certificates, payments, avgScoreObj] = await Promise.all([
+            // ✅ тільки пройдені тести
+            prisma.userTestHistory.count({ where: { userId, passed: true } }),
+
+            prisma.certificate.count({ where: { userId } }),
+
+            prisma.payment.count({
+                where: {
+                    userId,
+                    status: { in: ["paid", "succeeded", "pending"] },
+                },
+            }),
+
+            prisma.userTestHistory.aggregate({
+                where: { userId, passed: true },
+                _avg: { score: true },
+            }),
+        ]);
+
+        const avgScore = Math.round(avgScoreObj._avg.score || 0);
+
+        const userStats = {
+            id: userId,
+            testsPassed,
+            certificates,
+            payments,
+            avgScore,
+        };
+
+        return await checkAchievements(userStats);
+    } catch (err) {
+        console.error("❌ triggerAchievementsCheck error:", err);
         return [];
     }
 }

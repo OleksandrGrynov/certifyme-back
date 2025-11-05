@@ -1,105 +1,115 @@
 import express from "express";
-import { pool } from "../config/db.js";
+import prisma from "../config/prisma.js";
 import authMiddleware, { isAdmin } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
+/* ======================================================
+   👥 Отримати всіх користувачів
+   ====================================================== */
 router.get("/users", authMiddleware, isAdmin, async (req, res) => {
     try {
-        const result = await pool.query(`
-            SELECT
-                id,
-                first_name || ' ' || last_name AS full_name,
-                email,
-                role,
-                TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at
-            FROM users
-            ORDER BY id ASC
-        `);
-        res.json({ success: true, users: result.rows });
+        const users = await prisma.user.findMany({
+            orderBy: { id: "asc" },
+            select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                role: true,
+                createdAt: true,
+            },
+        });
+
+        const rows = users.map((u) => ({
+            id: u.id,
+            full_name: `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim(),
+            email: u.email,
+            role: u.role,
+            created_at: new Date(u.createdAt)
+                .toISOString()
+                .slice(0, 16)
+                .replace("T", " "),
+        }));
+
+        res.json({ success: true, users: rows });
     } catch (err) {
         console.error("❌ getAllUsers error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
+/* ======================================================
+   🗑️ Видалення користувача з архівацією платежів
+   ====================================================== */
 router.delete("/users/:id", authMiddleware, isAdmin, async (req, res) => {
-    const client = await pool.connect();
+    const id = Number(req.params.id);
     try {
-        const { id } = req.params;
+        const user = await prisma.user.findUnique({
+            where: { id },
+            select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                role: true,
+            },
+        });
 
-        const userRes = await client.query(
-            "SELECT first_name, last_name, email, role FROM users WHERE id = $1",
-            [id]
-        );
-        if (userRes.rows.length === 0)
+        if (!user)
             return res
                 .status(404)
                 .json({ success: false, message: "Користувача не знайдено" });
 
-        const user = userRes.rows[0];
         if (user.role === "admin")
-            return res
-                .status(403)
-                .json({ success: false, message: "Неможливо видалити адміністратора" });
+            return res.status(403).json({
+                success: false,
+                message: "Неможливо видалити адміністратора",
+            });
 
-        await client.query("BEGIN");
+        await prisma.$transaction(async (tx) => {
+            // 💾 архівація платежів
+            const payments = await tx.payment.findMany({
+                where: { userId: id },
+                select: { amountCents: true, createdAt: true },
+            });
 
-        await client.query(`
-      CREATE TABLE IF NOT EXISTS payment_archive (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER,
-        user_email VARCHAR(255),
-        user_name VARCHAR(255),
-        amount_usd DECIMAL(10,2),
-        created_at TIMESTAMP DEFAULT NOW()
-      );
-    `);
+            if (payments.length) {
+                await tx.paymentArchive.createMany({
+                    data: payments.map((p) => ({
+                        userId: id,
+                        userEmail: user.email,
+                        userName: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim(),
+                        amountUsd: (p.amountCents || 0) / 100,
+                        createdAt: p.createdAt,
+                    })),
+                });
+            }
 
-        const payments = await client.query(
-            "SELECT amount_cents, created_at FROM payments WHERE user_id = $1",
-            [id]
-        );
+            await tx.certificate.deleteMany({ where: { userId: id } });
+            await tx.userAchievement.deleteMany({ where: { userId: id } });
+            await tx.userTest.deleteMany({ where: { userId: id } });
+            await tx.payment.deleteMany({ where: { userId: id } });
+            await tx.user.delete({ where: { id } });
+        });
 
-        for (const p of payments.rows) {
-            await client.query(
-                `INSERT INTO payment_archive (user_id, user_email, user_name, amount_usd, created_at)
-         VALUES ($1, $2, $3, $4, $5)`,
-                [
-                    id,
-                    user.email,
-                    `${user.first_name} ${user.last_name}`,
-                    (p.amount_cents || 0) / 100,
-                    p.created_at,
-                ]
-            );
-        }
-
-        await client.query("DELETE FROM certificates WHERE user_id = $1", [id]);
-        await client.query("DELETE FROM user_achievements WHERE user_id = $1", [id]);
-        await client.query("DELETE FROM user_tests WHERE user_id = $1", [id]);
-        await client.query("DELETE FROM payments WHERE user_id = $1", [id]);
-
-        await client.query("DELETE FROM users WHERE id = $1", [id]);
-
-        await client.query("COMMIT");
         res.json({
             success: true,
             message:
                 "Користувача та пов'язані дані видалено, оплати архівовано для аналітики.",
         });
     } catch (err) {
-        await client.query("ROLLBACK");
         console.error("❌ deleteUser error:", err);
         res.status(500).json({ success: false, message: "Server error" });
-    } finally {
-        client.release();
     }
 });
 
+/* ======================================================
+   ✏️ Змінити роль користувача
+   ====================================================== */
 router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = Number(req.params.id);
         const { role } = req.body;
 
         const allowedRoles = ["user", "admin"];
@@ -107,64 +117,91 @@ router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
             return res.status(400).json({ success: false, message: "Invalid role" });
         }
 
-        const userRes = await pool.query("SELECT id, role FROM users WHERE id = $1", [id]);
-        if (userRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Користувача не знайдено" });
+        const user = await prisma.user.findUnique({
+            where: { id },
+            select: { id: true, role: true },
+        });
+        if (!user)
+            return res
+                .status(404)
+                .json({ success: false, message: "Користувача не знайдено" });
+
+        if (user.role === "admin" && role !== "admin") {
+            const adminsCount = await prisma.user.count({ where: { role: "admin" } });
+            if (adminsCount <= 1)
+                return res.status(400).json({
+                    success: false,
+                    message: "Неможливо понизити останнього адміністратора",
+                });
         }
 
-        const currentRole = userRes.rows[0].role;
+        const updated = await prisma.user.update({
+            where: { id },
+            data: { role },
+            select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                role: true,
+                createdAt: true,
+            },
+        });
 
-        if (currentRole === "admin" && role !== "admin") {
-            const adminsCountRes = await pool.query("SELECT COUNT(*) FROM users WHERE role = 'admin'");
-            const adminsCount = Number(adminsCountRes.rows[0].count || 0);
-            if (adminsCount <= 1) {
-                return res
-                    .status(400)
-                    .json({ success: false, message: "Неможливо понизити останнього адміністратора" });
-            }
-        }
-
-        const updated = await pool.query(
-            `UPDATE users SET role = $1 WHERE id = $2 RETURNING id, first_name, last_name, email, role, created_at`,
-            [role, id]
-        );
-
-        res.json({ success: true, user: updated.rows[0] });
+        res.json({ success: true, user: updated });
     } catch (err) {
         console.error("❌ updateUserRole error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
+/* ======================================================
+   🎓 Отримати всі сертифікати
+   ====================================================== */
 router.get("/certificates", authMiddleware, isAdmin, async (req, res) => {
     try {
-        const query = `
-            SELECT
-                c.*,
-                json_build_object(
-                        'id', u.id,
-                        'name', COALESCE(u.first_name || ' ' || u.last_name, c.user_name),
-                        'email', COALESCE(u.email, c.user_email, '-')
-                ) AS "user",
-                COALESCE(t.title_ua, c.course) AS test_title
-            FROM certificates c
-                     LEFT JOIN users u ON u.id = c.user_id
-                     LEFT JOIN tests t ON t.id = c.test_id
-            ORDER BY c.issued DESC;
-        `;
-        const result = await pool.query(query);
-        res.json({ success: true, certificates: result.rows });
+        const certs = await prisma.certificate.findMany({
+            orderBy: { issued: "desc" },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        firstName: true,
+                        lastName: true,
+                        email: true,
+                    },
+                },
+                test: { select: { titleUa: true, titleEn: true } },
+            },
+        });
+
+        const rows = certs.map((c) => ({
+            ...c,
+            user: {
+                id: c.user?.id || null,
+                name:
+                    (c.user
+                        ? `${c.user.firstName || ""} ${c.user.lastName || ""}`.trim()
+                        : c.userName) || c.userName || "-",
+                email: c.user?.email || c.userEmail || "-",
+            },
+            test_title: c.test?.titleUa || c.course,
+        }));
+
+        res.json({ success: true, certificates: rows });
     } catch (err) {
         console.error("❌ getAllCertificates error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-
+/* ======================================================
+   🧾 Видалення сертифікату
+   ====================================================== */
 router.delete("/certificates/:id", authMiddleware, isAdmin, async (req, res) => {
     try {
-        const { id } = req.params;
-        await pool.query("DELETE FROM certificates WHERE id = $1", [id]);
+        const id = Number(req.params.id);
+        await prisma.certificate.delete({ where: { id } });
         res.json({ success: true });
     } catch (err) {
         console.error("❌ deleteCertificate error:", err);
@@ -172,50 +209,75 @@ router.delete("/certificates/:id", authMiddleware, isAdmin, async (req, res) => 
     }
 });
 
+/* ======================================================
+   📊 Глобальна статистика (users/tests/certs/payments)
+   ====================================================== */
 router.get("/stats", authMiddleware, isAdmin, async (req, res) => {
     try {
-        const [users, tests, certs] = await Promise.all([
-            pool.query("SELECT COUNT(*) FROM users"),
-            pool.query("SELECT COUNT(*) FROM tests"),
-            pool.query("SELECT COUNT(*) FROM certificates"),
+        const [
+            usersCount,
+            testsCount,
+            certsCount,
+            avgPercentAgg,
+            certsByTestRaw,
+            usersByMonthRaw,
+            paymentsSum,
+            paymentsArchiveSum,
+        ] = await Promise.all([
+            prisma.user.count(),
+            prisma.test.count(),
+            prisma.certificate.count(),
+            prisma.certificate.aggregate({ _avg: { percent: true } }),
+            prisma.certificate.findMany({
+                include: { test: { select: { titleUa: true } } },
+            }),
+            prisma.user.findMany({
+                where: {
+                    createdAt: { gte: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000) },
+                },
+                select: { createdAt: true },
+            }),
+            prisma.payment.aggregate({ _sum: { amountCents: true } }),
+            prisma.paymentArchive.aggregate({ _sum: { amountUsd: true } }),
         ]);
 
-        const avgPercent = await pool.query("SELECT AVG(percent) FROM certificates");
+        const avg_percent = Math.round(avgPercentAgg._avg.percent || 0);
 
-        const certsByTest = await pool.query(`
-            SELECT t.title_ua AS test, COUNT(c.id) AS count
-            FROM certificates c
-                JOIN tests t ON t.id = c.test_id
-            GROUP BY t.title_ua
-            ORDER BY count DESC;
-        `);
+        const certs_by_test_map = new Map();
+        for (const c of certsByTestRaw) {
+            const title = c.test?.titleUa || c.course;
+            certs_by_test_map.set(title, (certs_by_test_map.get(title) || 0) + 1);
+        }
+        const certs_by_test = Array.from(certs_by_test_map.entries()).map(
+            ([test, count]) => ({ test, count })
+        );
 
-        const usersByMonth = await pool.query(`
-            SELECT TO_CHAR(created_at, 'YYYY-MM') AS month, COUNT(*) AS count
-            FROM users
-            WHERE created_at >= NOW() - INTERVAL '12 months'
-            GROUP BY month
-            ORDER BY month ASC;
-        `);
+        const users_by_month_map = new Map();
+        for (const u of usersByMonthRaw) {
+            const key = u.createdAt.toISOString().slice(0, 7);
+            users_by_month_map.set(
+                key,
+                (users_by_month_map.get(key) || 0) + 1
+            );
+        }
+        const users_by_month = Array.from(users_by_month_map.entries())
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([month, count]) => ({ month, count }));
 
-        const paymentsTotal = await pool.query(`
-      SELECT SUM(amount_usd)::float AS total_usd FROM (
-        SELECT amount_cents / 100.0 AS amount_usd FROM payments
-        UNION ALL
-        SELECT amount_usd FROM payment_archive
-      ) AS all_payments;
-    `);
+        const totalPaymentsUsd =
+            ((paymentsSum._sum.amountCents || 0) / 100 +
+                (Number(paymentsArchiveSum._sum.amountUsd) || 0));
 
         res.json({
             success: true,
             stats: {
-                users: Number(users.rows[0].count),
-                tests: Number(tests.rows[0].count),
-                certificates: Number(certs.rows[0].count),
-                avg_percent: Math.round(avgPercent.rows[0].avg || 0),
-                payments_total: Number(paymentsTotal.rows[0].total_usd || 0),
-                certs_by_test: certsByTest.rows,
-                users_by_month: usersByMonth.rows,
+                users: usersCount,
+                tests: testsCount,
+                certificates: certsCount,
+                avg_percent,
+                payments_total: Number(totalPaymentsUsd.toFixed(2)),
+                certs_by_test,
+                users_by_month,
             },
         });
     } catch (err) {

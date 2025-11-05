@@ -1,13 +1,21 @@
-//adminController
-import { pool } from "../config/db.js";
+import prisma from "../config/prisma.js";
 
 // 🔹 Отримати список усіх користувачів
 export const getAllUsers = async (req, res) => {
     try {
-        const users = await pool.query(
-            "SELECT id, first_name, last_name, email, role, created_at FROM users ORDER BY id ASC"
-        );
-        res.json({ success: true, users: users.rows });
+        const users = await prisma.user.findMany({
+            select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                role: true,
+                createdAt: true,
+            },
+            orderBy: { id: "asc" },
+        });
+
+        res.json({ success: true, users });
     } catch (err) {
         console.error("❌ getAllUsers error:", err);
         res.status(500).json({ success: false, message: "Server error" });
@@ -16,68 +24,94 @@ export const getAllUsers = async (req, res) => {
 
 // 🔹 Видалити користувача
 export const deleteUser = async (req, res) => {
-    const client = await pool.connect();
     try {
-        const { id } = req.params;
-        const userRes = await client.query("SELECT role FROM users WHERE id=$1", [id]);
-        if (userRes.rows.length === 0) {
+        const id = Number(req.params.id);
+
+        // 1️⃣ Перевіряємо, чи існує користувач
+        const user = await prisma.user.findUnique({
+            where: { id },
+            select: { role: true },
+        });
+
+        if (!user)
             return res.status(404).json({ success: false, message: "Користувача не знайдено" });
-        }
 
-        if (userRes.rows[0].role === "admin") {
+        if (user.role === "admin")
             return res.status(403).json({ success: false, message: "Неможливо видалити адміністратора" });
-        }
 
-        await client.query("BEGIN");
+        // 2️⃣ Починаємо транзакцію
+        await prisma.$transaction(async (tx) => {
+            await tx.certificate.deleteMany({ where: { userId: id } });
+            await tx.userAchievement.deleteMany({ where: { userId: id } });
+            // якщо в БД є інші таблиці з userId — додай тут:
+            // await tx.review.deleteMany({ where: { userId: id } });
 
-        // Видаляємо пов'язані дані (сертифікати, досягнення, тощо)
-        await client.query("DELETE FROM certificates WHERE user_id = $1", [id]);
-        await client.query("DELETE FROM user_achievements WHERE user_id = $1", [id]);
-        // Якщо у вашій БД є інші таблиці з user_id - додайте їх сюди
-        // await client.query("DELETE FROM reviews WHERE user_id = $1", [id]);
+            await tx.user.delete({ where: { id } });
+        });
 
-        // Видаляємо користувача
-        await client.query("DELETE FROM users WHERE id = $1", [id]);
-
-        await client.query("COMMIT");
         res.json({ success: true, message: "Користувача успішно видалено ✅" });
     } catch (err) {
-        await client.query("ROLLBACK");
         console.error("❌ deleteUser error:", err);
         res.status(500).json({ success: false, message: "Server error" });
-    } finally {
-        client.release();
     }
 };
+
 // 🔹 Отримати всі сертифікати (для адмін-панелі)
 export const getAllCertificates = async (req, res) => {
     try {
-        const lang = req.query.lang || "ua";
+        const list = await prisma.certificate.findMany({
+            select: {
+                id: true,
+                userId: true,
+                testId: true,
+                percent: true,
+                issued: true,
+                expires: true,
+                user: {
+                    select: {
+                        firstName: true,
+                        lastName: true,
+                        email: true,
+                    },
+                },
+                test: {
+                    select: {
+                        titleUa: true,
+                        titleEn: true,
+                    },
+                },
+            },
+            orderBy: { id: "desc" },
+        });
 
-        const query = `
-            SELECT c.id, c.user_id, c.test_id, c.percent, c.issued, c.expires,
-                   u.first_name || ' ' || u.last_name AS user_name, 
-                   u.email AS user_email,
-                   t.title_ua AS test_title_ua, t.title_en AS test_title_en
-            FROM certificates c
-            JOIN users u ON c.user_id = u.id
-            JOIN tests t ON c.test_id = t.id
-            ORDER BY c.id DESC
-        `;
+        const certificates = list.map((c) => ({
+            id: c.id,
+            user_id: c.userId,
+            test_id: c.testId,
+            percent: c.percent,
+            issued: c.issued,
+            expires: c.expires,
+            user_name: `${c.user?.firstName || ""} ${c.user?.lastName || ""}`.trim(),
+            user_email: c.user?.email || null,
+            test_title_ua: c.test?.titleUa || null,
+            test_title_en: c.test?.titleEn || null,
+        }));
 
-        const result = await pool.query(query);
-        res.json({ success: true, certificates: result.rows });
+        res.json({ success: true, certificates });
     } catch (err) {
         console.error("❌ getAllCertificates error:", err);
-        res.status(500).json({ success: false, message: "Server error while loading certificates" });
+        res.status(500).json({
+            success: false,
+            message: "Server error while loading certificates",
+        });
     }
 };
 
 // 🔹 Видалити сертифікат
 export const deleteCertificate = async (req, res) => {
     try {
-        const { id } = req.params;
-        await pool.query("DELETE FROM certificates WHERE id = $1", [id]);
+        const id = Number(req.params.id);
+        await prisma.certificate.delete({ where: { id } });
         res.json({ success: true, message: "Certificate deleted" });
     } catch (err) {
         console.error("❌ deleteCertificate error:", err);

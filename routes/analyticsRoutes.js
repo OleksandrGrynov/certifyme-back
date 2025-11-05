@@ -1,39 +1,77 @@
 import express from "express";
-import { pool } from "../config/db.js";
+import prisma from "../config/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
+/* ======================================================
+   📊 Загальний огляд користувача
+   ====================================================== */
 router.get("/user/overview", authMiddleware, async (req, res) => {
     try {
         const userId = req.user.id;
 
-        const [courses, tests, avg, certs, passRate, streak] = await Promise.all([
-            pool.query("SELECT COUNT(DISTINCT test_id) FROM certificates WHERE user_id = $1", [userId]),
-            pool.query("SELECT COUNT(*) FROM certificates WHERE user_id = $1", [userId]),
-            pool.query("SELECT AVG(percent) FROM certificates WHERE user_id = $1", [userId]),
-            pool.query("SELECT COUNT(*) FROM certificates WHERE user_id = $1", [userId]),
-            pool.query("SELECT AVG(CASE WHEN percent >= 60 THEN 1 ELSE 0 END)::float FROM certificates WHERE user_id = $1", [userId]),
-            pool.query(`
-          SELECT COUNT(*) AS streak
-          FROM (
-              SELECT DISTINCT DATE(created_at)
-              FROM certificates
-              WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '30 days'
-          ) d
-      `, [userId]),
-        ]);
+        // 🧾 Отримуємо всі сертифікати користувача
+        const certs = await prisma.certificate.findMany({
+            where: { userId },
+            select: { percent: true, createdAt: true, testId: true },
+        });
 
+        const totalCerts = certs.length;
+        const totalTests = totalCerts;
+        const uniqueTests = new Set(certs.map((c) => c.testId)).size;
+
+        // 🎯 Середній бал
+        const avgScore =
+            totalCerts > 0
+                ? Math.round(
+                    certs.reduce((sum, c) => sum + (c.percent || 0), 0) / totalCerts
+                )
+                : 0;
+
+        // 🧠 Прохідність (успішно зданих)
+        const passed = certs.filter((c) => c.percent >= 60).length;
+        const passRate = totalCerts > 0 ? (passed / totalCerts) * 100 : 0;
+
+        // 🔥 Поточний стрік (днів поспіль з активністю)
+        const daysActive = [
+            ...new Set(certs.map((c) => c.createdAt.toISOString().slice(0, 10))),
+        ]
+            .sort()
+            .reverse();
+
+        let streak = 0;
+        if (daysActive.length > 0) {
+            let prevDate = new Date(daysActive[0]);
+            for (const day of daysActive) {
+                const d = new Date(day);
+                const diff = Math.floor((prevDate - d) / (1000 * 60 * 60 * 24));
+                if (diff === 1 || diff === 0) {
+                    streak++;
+                    prevDate = d;
+                } else break;
+            }
+        }
+
+        // 🧩 Розрахунок рівня користувача
+        const exp =
+            totalTests * 10 + totalCerts * 20 + avgScore * 0.5 + streak * 5;
+        const level = Math.floor(exp / 100);
+        const levelProgress = Math.round(exp % 100);
+
+        // 📤 Відповідь
         res.json({
             success: true,
             data: {
                 user_id: userId,
-                courses_enrolled: Number(courses.rows[0].count),
-                my_tests_taken: Number(tests.rows[0].count),
-                my_avg_score: Math.round(avg.rows[0].avg || 0),
-                my_certificates: Number(certs.rows[0].count),
-                my_pass_rate: Number(passRate.rows[0].avg || 0),
-                current_streak_days: Number(streak.rows[0].streak || 0),
+                courses_enrolled: uniqueTests,
+                my_tests_taken: totalTests,
+                my_avg_score: avgScore,
+                my_certificates: totalCerts,
+                my_pass_rate: Number(passRate.toFixed(1)), // %
+                current_streak_days: streak,
+                level, // 🧩 рівень
+                level_progress: levelProgress, // 🧩 %
                 last_updated: new Date(),
             },
         });
@@ -43,58 +81,149 @@ router.get("/user/overview", authMiddleware, async (req, res) => {
     }
 });
 
+
+
+/* ======================================================
+   📆 Активність користувача (щоденна)
+   ====================================================== */
 router.get("/user/daily", authMiddleware, async (req, res) => {
-    const { days = 30 } = req.query;
-    const userId = req.user.id;
     try {
-        const activity = await pool.query(`
-      SELECT TO_CHAR(created_at, 'YYYY-MM-DD') AS date, COUNT(*)::int AS count
-      FROM certificates
-      WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '${days} days'
-      GROUP BY date ORDER BY date ASC;
-    `, [userId]);
-        res.json({ success: true, data: { activity: activity.rows, tests: activity.rows } });
+        const userId = req.user.id;
+        const days = Number(req.query.days || 30);
+        const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+        const certs = await prisma.certificate.findMany({
+            where: { userId, createdAt: { gte: since } },
+            select: { createdAt: true },
+        });
+
+        const map = new Map();
+        for (const c of certs) {
+            const date = c.createdAt.toISOString().slice(0, 10);
+            map.set(date, (map.get(date) || 0) + 1);
+        }
+
+        const data = Array.from(map.entries())
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([date, count]) => ({ date, count }));
+
+        res.json({ success: true, data: { activity: data, tests: data } });
     } catch (err) {
         console.error("❌ user/daily error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
+/* ======================================================
+   🧠 Топ-курси користувача
+   ====================================================== */
 router.get("/user/top-courses", authMiddleware, async (req, res) => {
-    const { limit = 10 } = req.query;
-    const userId = req.user.id;
     try {
-        const result = await pool.query(`
-      SELECT t.title_ua AS name, COUNT(c.id)::int AS tests_taken, ROUND(AVG(c.percent),1) AS avg_score
-      FROM certificates c
-      JOIN tests t ON t.id = c.test_id
-      WHERE c.user_id = $1
-      GROUP BY t.title_ua
-      ORDER BY tests_taken DESC
-      LIMIT $2;
-    `, [userId, limit]);
-        res.json({ success: true, data: result.rows });
+        const userId = req.user.id;
+        const limit = Number(req.query.limit || 10);
+
+        const certs = await prisma.certificate.findMany({
+            where: { userId },
+            include: { test: { select: { titleUa: true } } },
+        });
+
+        const map = new Map();
+        for (const c of certs) {
+            const title = c.test?.titleUa || c.course || "—";
+            const key = title.toLowerCase();
+            const prev = map.get(key) || { name: title, count: 0, sum: 0 };
+            prev.count += 1;
+            prev.sum += c.percent || 0;
+            map.set(key, prev);
+        }
+
+        const data = Array.from(map.values())
+            .map((v) => ({
+                name: v.name,
+                tests_taken: v.count,
+                avg_score: Math.round((v.sum / v.count) * 10) / 10,
+            }))
+            .sort((a, b) => b.tests_taken - a.tests_taken)
+            .slice(0, limit);
+
+        res.json({ success: true, data });
     } catch (err) {
         console.error("❌ user/top-courses error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
+/* ======================================================
+   🕒 Останні події користувача
+   ====================================================== */
 router.get("/user/recent", authMiddleware, async (req, res) => {
-    const { limit = 20 } = req.query;
-    const userId = req.user.id;
     try {
-        const result = await pool.query(`
-      SELECT created_at, 'certificate' AS type,
-             'Ви отримали сертифікат: ' || COALESCE(course, '—') AS description
-      FROM certificates
-      WHERE user_id = $1
-      ORDER BY created_at DESC
-      LIMIT $2;
-    `, [userId, limit]);
-        res.json({ success: true, data: result.rows });
+        const userId = req.user.id;
+        const limit = Number(req.query.limit || 20);
+
+        const certs = await prisma.certificate.findMany({
+            where: { userId },
+            orderBy: { createdAt: "desc" },
+            take: limit,
+            select: { createdAt: true, course: true },
+        });
+
+        const data = certs.map((c) => ({
+            created_at: c.createdAt,
+            type: "certificate",
+            description: `Ви отримали сертифікат: ${c.course || "—"}`,
+        }));
+
+        res.json({ success: true, data });
     } catch (err) {
         console.error("❌ user/recent error:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+/* ======================================================
+   🌍 Публічна статистика для головної сторінки
+   ====================================================== */
+router.get("/public/overview", async (req, res) => {
+    try {
+        // Отримуємо базову статистику
+        const [users, tests, certificates] = await Promise.all([
+            prisma.user.count(),
+            prisma.test.count(),
+            prisma.certificate.count(),
+        ]);
+
+        res.json({
+            success: true,
+            data: {
+                learners: users,
+                courses: tests,
+                certificates,
+                years: 2, // або розрахуй динамічно, наприклад new Date().getFullYear() - 2023
+            },
+        });
+    } catch (err) {
+        console.error("❌ public/overview error:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+router.get("/public/stats", async (req, res) => {
+    try {
+        const [users, tests, certificates] = await Promise.all([
+            prisma.user.count(),
+            prisma.test.count(),
+            prisma.certificate.count(),
+        ]);
+        res.json({
+            success: true,
+            data: {
+                learners: users,
+                courses: tests,
+                certificates,
+                years: 2,
+            },
+        });
+    } catch (err) {
+        console.error("❌ public/stats error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });

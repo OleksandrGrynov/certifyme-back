@@ -1,119 +1,130 @@
-import { pool } from "../config/db.js";
+import prisma from "../config/prisma.js";
 
-// 🔹 Отримати всі досягнення користувача з урахуванням мови
+/* ======================================================
+   🔹 Отримати всі досягнення користувача з урахуванням мови
+   ====================================================== */
 export async function getUserAchievements(userId, lang = "ua") {
-    const isEnglish = lang === "en";
+    const rows = await prisma.userAchievement.findMany({
+        where: { userId },
+        include: { achievement: true },
+        orderBy: [
+            { achievement: { category: "asc" } },
+            { achievementId: "asc" },
+        ],
+    });
 
-    const result = await pool.query(
-        `
-        SELECT 
-            a.id,
-            a.title_ua,
-            a.title_en,
-            a.description_ua,
-            a.description_en,
-            a.category,
-            a.icon,
-            ua.progress,
-            ua.achieved,
-            ua.achieved_at,
-            -- 🧩 додаємо локалізовані поля
-            CASE WHEN $2 = 'en' THEN a.title_en ELSE a.title_ua END AS title,
-            CASE WHEN $2 = 'en' THEN a.description_en ELSE a.description_ua END AS description
-        FROM user_achievements ua
-                 JOIN achievements a ON a.id = ua.achievement_id
-        WHERE ua.user_id = $1
-        ORDER BY a.category, a.id;
-        `,
-        [userId, lang]
-    );
-
-    return result.rows;
+    return rows.map((r) => ({
+        id: r.achievementId,
+        title_ua: r.achievement.titleUa,
+        title_en: r.achievement.titleEn,
+        description_ua: r.achievement.descriptionUa,
+        description_en: r.achievement.descriptionEn,
+        category: r.achievement.category,
+        icon: r.achievement.icon,
+        progress: r.progress,
+        achieved: r.achieved,
+        achieved_at: r.achievedAt,
+        title: lang === "en" ? r.achievement.titleEn : r.achievement.titleUa,
+        description:
+            lang === "en"
+                ? r.achievement.descriptionEn
+                : r.achievement.descriptionUa,
+    }));
 }
 
-// 🔹 Оновити прогрес
+/* ======================================================
+   🔹 Оновити прогрес (еквівалент SQL UPDATE)
+   ====================================================== */
 export async function updateUserAchievement(userId, achievementId, newProgress) {
     const progress = Math.min(newProgress, 100);
     const achieved = progress >= 100;
 
-    await pool.query(
-        `
-            UPDATE user_achievements
-            SET progress = $1,
-                achieved = $2,
-                achieved_at = CASE WHEN $2 THEN NOW() ELSE achieved_at END
-            WHERE user_id = $3 AND achievement_id = $4
-        `,
-        [progress, achieved, userId, achievementId]
-    );
+    return prisma.userAchievement.update({
+        where: { userId_achievementId: { userId, achievementId } },
+        data: {
+            progress,
+            achieved,
+            achievedAt: achieved ? new Date() : undefined,
+        },
+    });
 }
 
-// 🔹 Ініціалізувати досягнення для користувача
+/* ======================================================
+   🔹 Ініціалізувати досягнення для користувача
+   ====================================================== */
 export async function initUserAchievements(userId) {
-    await pool.query(
-        `
-            INSERT INTO user_achievements (user_id, achievement_id)
-            SELECT $1, id FROM achievements
-                ON CONFLICT DO NOTHING
-        `,
-        [userId]
+    const achievements = await prisma.achievement.findMany({ select: { id: true } });
+
+    await prisma.$transaction(
+        achievements.map((a) =>
+            prisma.userAchievement.upsert({
+                where: { userId_achievementId: { userId, achievementId: a.id } },
+                create: { userId, achievementId: a.id },
+                update: {},
+            })
+        )
     );
 }
 
-// 🔹 Гарантовано створити досягнення, якщо їх нема (навіть у адміна)
+/* ======================================================
+   🔹 Гарантовано створити досягнення, якщо їх нема
+   ====================================================== */
 export async function ensureUserAchievements(userId) {
-    const existing = await pool.query(
-        `SELECT COUNT(*) FROM user_achievements WHERE user_id = $1`,
-        [userId]
-    );
+    const allAchievements = await prisma.achievement.findMany({ select: { id: true } });
+    const userAchievements = await prisma.userAchievement.findMany({
+        where: { userId },
+        select: { achievementId: true },
+    });
 
-    if (Number(existing.rows[0].count) === 0) {
-        console.log(`🧩 Initializing achievements for user ${userId}`);
-        await initUserAchievements(userId);
+    const existingIds = new Set(userAchievements.map((u) => u.achievementId));
+    const missing = allAchievements.filter((a) => !existingIds.has(a.id));
+
+    if (missing.length > 0) {
+        console.log(`🧩 Adding ${missing.length} missing achievements for user ${userId}`);
+        await prisma.userAchievement.createMany({
+            data: missing.map((a) => ({
+                userId,
+                achievementId: a.id,
+            })),
+            skipDuplicates: true,
+        });
     }
 }
 
-// 🔹 Розблокувати або оновити досягнення за code
+
+/* ======================================================
+   🔹 Розблокувати або оновити досягнення за code
+   ====================================================== */
 export async function setAchievementByCode(userId, code, progress) {
-    const achieved = Math.min(progress, 100) >= 100;
-    const client = await pool.connect();
-    try {
-        await client.query("BEGIN");
+    const achievement = await prisma.achievement.findUnique({ where: { code } });
+    if (!achievement) throw new Error(`Unknown achievement code: ${code}`);
 
-        const a = await client.query(
-            `SELECT id FROM achievements WHERE code = $1 LIMIT 1`,
-            [code]
-        );
-        if (a.rows.length === 0) throw new Error(`Unknown achievement code: ${code}`);
-        const achievementId = a.rows[0].id;
+    const newProgress = Math.min(progress, 100);
+    const achieved = newProgress >= 100;
 
-        await client.query(
-            `
-                INSERT INTO user_achievements (user_id, achievement_id, progress, achieved, achieved_at)
-                VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN NOW() ELSE NULL END)
-                    ON CONFLICT (user_id, achievement_id)
-            DO UPDATE SET
-                    progress = GREATEST(user_achievements.progress, EXCLUDED.progress),
-                                       achieved = user_achievements.achieved OR EXCLUDED.achieved,
-                                       achieved_at = CASE
-                                       WHEN (user_achievements.achieved = FALSE AND EXCLUDED.achieved = TRUE)
-                                       THEN NOW()
-                                       ELSE user_achievements.achieved_at
-                END;
-            `,
-            [userId, achievementId, Math.min(progress, 100), achieved]
-        );
-
-        await client.query("COMMIT");
-    } catch (e) {
-        await client.query("ROLLBACK");
-        throw e;
-    } finally {
-        client.release();
-    }
+    // Еквівалент INSERT ... ON CONFLICT DO UPDATE
+    await prisma.userAchievement.upsert({
+        where: {
+            userId_achievementId: { userId, achievementId: achievement.id },
+        },
+        create: {
+            userId,
+            achievementId: achievement.id,
+            progress: newProgress,
+            achieved,
+            achievedAt: achieved ? new Date() : null,
+        },
+        update: {
+            progress: { set: newProgress },
+            achieved: { set: achieved },
+            achievedAt: achieved ? new Date() : undefined,
+        },
+    });
 }
 
-// 🔹 Оновити кілька досягнень разом
+/* ======================================================
+   🔹 Оновити кілька досягнень разом
+   ====================================================== */
 export async function updateAchievementsBatch(userId, updates = []) {
     for (const u of updates) {
         await setAchievementByCode(userId, u.code, u.progress ?? 0);
@@ -121,24 +132,52 @@ export async function updateAchievementsBatch(userId, updates = []) {
     return true;
 }
 
-// 🔹 Розблокувати досягнення по коду (100% одразу)
+/* ======================================================
+   🔹 Розблокувати досягнення по коду (100% одразу)
+   ====================================================== */
 export async function unlockUserAchievementByCode(userId, code) {
-    const res = await pool.query(
-        `SELECT id, title_ua, title_en FROM achievements WHERE code = $1 LIMIT 1`,
-        [code]
-    );
-    if (res.rowCount === 0) return null;
-    const achievement = res.rows[0];
+    const achievement = await prisma.achievement.findUnique({ where: { code } });
+    if (!achievement) return null;
 
-    await pool.query(
-        `
-            INSERT INTO user_achievements (user_id, achievement_id, progress, achieved, achieved_at)
-            VALUES ($1, $2, 100, TRUE, NOW())
-                ON CONFLICT (user_id, achievement_id)
-        DO UPDATE SET progress = 100, achieved = TRUE, achieved_at = NOW()
-        `,
-        [userId, achievement.id]
-    );
+    await prisma.userAchievement.upsert({
+        where: { userId_achievementId: { userId, achievementId: achievement.id } },
+        create: {
+            userId,
+            achievementId: achievement.id,
+            progress: 100,
+            achieved: true,
+            achievedAt: new Date(),
+        },
+        update: {
+            progress: 100,
+            achieved: true,
+            achievedAt: new Date(),
+        },
+    });
 
     return achievement;
+}
+
+/* ======================================================
+   🔹 Забезпечити наявність базового каталогу досягнень
+   ====================================================== */
+async function ensureAchievementCatalog() {
+    const existing = await prisma.achievement.count();
+    if (existing > 0) return;
+
+    const defaults = [
+        { code: "tests_1", titleUa: "Перший тест", titleEn: "First Test", category: "progress" },
+        { code: "certs_1", titleUa: "Перший сертифікат", titleEn: "First Certificate", category: "progress" },
+        { code: "night_owl", titleUa: "Нічна сова", titleEn: "Night Owl", category: "fun" },
+    ];
+
+    await prisma.$transaction(
+        defaults.map((a) =>
+            prisma.achievement.upsert({
+                where: { code: a.code },
+                update: {},
+                create: a,
+            })
+        )
+    );
 }

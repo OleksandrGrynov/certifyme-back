@@ -1,6 +1,7 @@
 // controllers/paymentController.js
 import Stripe from "stripe";
-import { pool } from "../config/db.js";
+import prisma from "../config/prisma.js";
+import { triggerAchievementsCheck } from "../utils/achievementEngine.js";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -10,8 +11,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 export const createCheckoutSession = async (req, res) => {
     try {
         const { testId } = req.body;
-        if (!testId)
-            return res.status(400).json({ message: "testId required" });
+        if (!testId) return res.status(400).json({ message: "testId required" });
 
         if (!req.user?.id)
             return res.status(401).json({ message: "Unauthorized: no user" });
@@ -19,27 +19,42 @@ export const createCheckoutSession = async (req, res) => {
         const userId = req.user.id;
 
         // 🔍 Отримуємо дані тесту
-        const testRes = await pool.query(
-            "SELECT id, title_ua, title_en, price_cents, currency FROM tests WHERE id=$1",
-            [testId]
-        );
-        const test = testRes.rows[0];
-        if (!test)
-            return res.status(404).json({ message: "Test not found" });
+        const test = await prisma.test.findUnique({
+            where: { id: Number(testId) },
+            select: {
+                id: true,
+                titleUa: true,
+                titleEn: true,
+                priceCents: true,
+                currency: true,
+            },
+        });
 
-        const amount = Number(test.price_cents) > 0 ? Number(test.price_cents) : 100;
+        if (!test) return res.status(404).json({ message: "Test not found" });
+
+        const amount =
+            typeof test.priceCents === "number" && test.priceCents > 0
+                ? test.priceCents
+                : 100;
 
         // 🧾 Створюємо запис у таблиці payments
-        const paymentInsert = await pool.query(
-            `INSERT INTO payments (user_id, test_id, amount_cents, currency, status, created_at)
-             VALUES ($1, $2, $3, $4, 'pending', NOW())
-             RETURNING id`,
-            [userId, test.id, amount, test.currency || "usd"]
-        );
+        const payment = await prisma.payment.create({
+            data: {
+                userId,
+                testId: test.id,
+                amountCents: amount,
+                currency: test.currency || "usd",
+                status: "pending",
+            },
+            select: { id: true },
+        });
 
-        const paymentId = paymentInsert.rows[0].id;
-
-        console.log("🧾 Creating Stripe session:", { userId, testId, paymentId, amount });
+        console.log("🧾 Creating Stripe session:", {
+            userId,
+            testId,
+            paymentId: payment.id,
+            amount,
+        });
 
         // 🪙 Створюємо Stripe Checkout Session
         const session = await stripe.checkout.sessions.create({
@@ -51,22 +66,23 @@ export const createCheckoutSession = async (req, res) => {
                         currency: test.currency || "usd",
                         unit_amount: amount,
                         product_data: {
-                            name: `Access to test: ${test.title_en || test.title_ua}`,
+                            name: `Access to test: ${test.titleEn || test.titleUa}`,
                         },
                     },
                     quantity: 1,
                 },
             ],
-            metadata: { userId, testId, paymentId },
+            metadata: { userId, testId: test.id, paymentId: payment.id },
+            // На проді доступ відкриває webhook; success_url — просто для UX
             success_url: `http://localhost:5173/tests?paid=true&testId=${testId}`,
             cancel_url: `http://localhost:5173/tests?paid=false`,
         });
 
         // 🆔 Зберігаємо ID Stripe-сесії
-        await pool.query("UPDATE payments SET stripe_session_id=$1 WHERE id=$2", [
-            session.id,
-            paymentId,
-        ]);
+        await prisma.payment.update({
+            where: { id: payment.id },
+            data: { stripeSessionId: session.id },
+        });
 
         res.json({ url: session.url });
     } catch (err) {
@@ -76,62 +92,72 @@ export const createCheckoutSession = async (req, res) => {
 };
 
 // ======================================================
-// 🧠 Локальний режим — без справжнього Stripe webhook
+// 🧠 Локальний режим — підтвердження без webhook (DEV)
 // ======================================================
 export const confirmLocalPayment = async (req, res) => {
     try {
-        const { userId, testId } = req.body;
-        console.log("🧾 Confirming local payment for", { userId, testId });
+        const userId = req.user?.id;
+        const { testId } = req.body;
 
         if (!userId || !testId)
-            return res.status(400).json({ success: false, message: "Missing data" });
+            return res
+                .status(400)
+                .json({ success: false, message: "Missing data" });
 
-        // 🔍 Перевіряємо, чи існує запис платежу
-        const paymentRes = await pool.query(
-            `SELECT id, status FROM payments 
-             WHERE user_id=$1 AND test_id=$2 
-             ORDER BY created_at DESC LIMIT 1`,
-            [userId, testId]
-        );
+        const numericUserId = Number(userId);
+        const numericTestId = Number(testId);
 
-        if (paymentRes.rows.length === 0) {
-            // 💾 Якщо запису немає — створюємо одразу успішний
-            await pool.query(
-                `INSERT INTO payments (user_id, test_id, amount_cents, currency, status, created_at)
-                 VALUES ($1, $2, 200, 'usd', 'succeeded', NOW())`,
-                [userId, testId]
-            );
-            console.log(`💳 Created new succeeded payment for user ${userId}, test ${testId}`);
+        console.log("🧾 Confirming local payment for", { userId, testId });
+
+        const lastPayment = await prisma.payment.findFirst({
+            where: { userId: numericUserId, testId: numericTestId },
+            orderBy: { createdAt: "desc" },
+        });
+
+        if (!lastPayment) {
+            console.log("⚠️ No existing payment found, creating new succeeded record");
+            await prisma.payment.create({
+                data: {
+                    userId: numericUserId,
+                    testId: numericTestId,
+                    amountCents: 0,
+                    currency: "usd",
+                    status: "succeeded",
+                },
+            });
+        } else if (lastPayment.status !== "succeeded") {
+            await prisma.payment.update({
+                where: { id: lastPayment.id },
+                data: { status: "succeeded", updatedAt: new Date() },
+            });
+            console.log(`💰 Updated payment ${lastPayment.id} to succeeded`);
         } else {
-            const payment = paymentRes.rows[0];
-
-            // ✅ Якщо статус ще не "succeeded" — оновлюємо
-            if (payment.status !== "succeeded") {
-                await pool.query(
-                    `UPDATE payments 
-                     SET status='succeeded', updated_at=NOW() 
-                     WHERE user_id=$1 AND test_id=$2`,
-                    [userId, testId]
-                );
-                console.log(`💰 Updated payment to succeeded for user ${userId}, test ${testId}`);
-            } else {
-                console.log(`⚡ Payment already succeeded for user ${userId}, test ${testId}`);
-            }
+            console.log(`⚡ Payment ${lastPayment.id} already succeeded`);
         }
 
-        // ✅ Розблоковуємо тест для користувача
-        await pool.query(
-            `INSERT INTO user_tests (user_id, test_id, is_unlocked)
-             VALUES ($1, $2, true)
-             ON CONFLICT (user_id, test_id)
-             DO UPDATE SET is_unlocked = true`,
-            [userId, testId]
-        );
+        // 🟢 Розблокувати тест
+        await prisma.userTest.upsert({
+            where: {
+                userId_testId: { userId: numericUserId, testId: numericTestId },
+            },
+            create: {
+                userId: numericUserId,
+                testId: numericTestId,
+                isUnlocked: true,
+                grantedAt: new Date(),
+            },
+            update: { isUnlocked: true, grantedAt: new Date() },
+        });
 
         console.log(`🚀 Test ${testId} unlocked for user ${userId}`);
+
+        // 🏆 Досягнення
+        const unlockedAchievements = await triggerAchievementsCheck(numericUserId);
+
         res.json({
             success: true,
-            message: "✅ Payment confirmed and test unlocked",
+            message: "✅ Payment confirmed, test unlocked, achievements checked",
+            unlocked: unlockedAchievements,
         });
     } catch (err) {
         console.error("❌ confirmLocalPayment error:", err);
@@ -140,8 +166,65 @@ export const confirmLocalPayment = async (req, res) => {
 };
 
 // ======================================================
-// 📴 Вебхук вимкнено локально
+// 📨 Stripe Webhook — ПРОДАКШЕН (Render/Vercel)
 // ======================================================
 export const stripeWebhook = async (req, res) => {
-    res.status(200).json({ message: "Webhook disabled in local mode" });
+    const sig = req.headers["stripe-signature"];
+    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+    let event;
+    try {
+        // ВАЖЛИВО: тут req.body — Buffer, бо маршрут оголошено з express.raw
+        event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    } catch (err) {
+        console.error("❌ Webhook signature verification failed:", err.message);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    const session = event.data.object;
+
+    try {
+        switch (event.type) {
+            case "checkout.session.completed": {
+                const userId = Number(session.metadata.userId);
+                const testId = Number(session.metadata.testId);
+                const paymentId = Number(session.metadata.paymentId);
+
+                console.log("✅ Webhook received for", { userId, testId, paymentId });
+
+                // 1️⃣ Оновити статус платежу
+                await prisma.payment.update({
+                    where: { id: paymentId },
+                    data: { status: "succeeded", updatedAt: new Date() },
+                });
+
+                // 2️⃣ Розблокувати тест
+                await prisma.userTest.upsert({
+                    where: { userId_testId: { userId, testId } },
+                    update: { isUnlocked: true, grantedAt: new Date() },
+                    create: { userId, testId, isUnlocked: true, grantedAt: new Date() },
+                });
+
+                console.log(`🚀 Test ${testId} unlocked for user ${userId}`);
+
+                // 3️⃣ Перевірка досягнень
+                const unlocked = await triggerAchievementsCheck(userId);
+                if (unlocked.length > 0)
+                    console.log(
+                        `🏅 User ${userId} unlocked:`,
+                        unlocked.map((a) => a.code)
+                    );
+                else console.log(`ℹ️ No new achievements for user ${userId}`);
+                break;
+            }
+
+            default:
+                console.log(`Unhandled event type: ${event.type}`);
+        }
+
+        res.json({ received: true });
+    } catch (err) {
+        console.error("💥 Webhook processing error:", err);
+        res.status(500).send("Internal webhook error");
+    }
 };
