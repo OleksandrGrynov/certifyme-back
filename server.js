@@ -32,16 +32,19 @@ dotenv.config();
 
 const app = express();
 
-// ⚙️ CORS (гнучкий whitelist)
 const allowedOrigins = [
     "https://certifyme.me",
     "https://www.certifyme.me",
-    "http://localhost:5173",
+    "http://localhost:5173"
 ];
 
 app.use(cors({
     origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
+        if (
+            !origin ||
+            allowedOrigins.includes(origin) ||
+            /^https:\/\/certifyme-front.*\.vercel\.app$/.test(origin)
+        ) {
             callback(null, true);
         } else {
             console.warn("❌ Blocked CORS for origin:", origin);
@@ -50,6 +53,7 @@ app.use(cors({
     },
     credentials: true,
 }));
+
 
 
 
