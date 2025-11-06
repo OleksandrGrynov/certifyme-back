@@ -51,8 +51,7 @@ app.use(cors({
     credentials: true,
 }));
 
-// (опціонально, але бажано)
-app.options("*", cors());
+
 
 
 // 📨 Stripe Webhook має бачити сире тіло (Buffer)!
