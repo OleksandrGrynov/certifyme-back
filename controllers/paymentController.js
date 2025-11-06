@@ -74,8 +74,8 @@ export const createCheckoutSession = async (req, res) => {
             ],
             metadata: { userId, testId: test.id, paymentId: payment.id },
             // На проді доступ відкриває webhook; success_url — просто для UX
-            success_url: `http://localhost:5173/tests?paid=true&testId=${testId}`,
-            cancel_url: `http://localhost:5173/tests?paid=false`,
+            success_url: `${process.env.FRONTEND_URL}/tests?paid=true&testId=${testId}`,
+            cancel_url: `${process.env.FRONTEND_URL}/tests?paid=false`,
         });
 
         // 🆔 Зберігаємо ID Stripe-сесії

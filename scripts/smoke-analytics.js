@@ -1,7 +1,6 @@
 // scripts/smoke-analytics.js
 import axios from 'axios';
-
-const BASE = 'http://localhost:5000/api';
+const BASE = `${process.env.BACKEND_URL}/api`;
 const email = process.env.SMOKE_EMAIL || 'admin@example.com';
 const password = process.env.SMOKE_PASSWORD || 'Admin123!';
 

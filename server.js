@@ -32,11 +32,28 @@ dotenv.config();
 
 const app = express();
 
-// ⚙️ CORS
+// ⚙️ CORS (гнучкий whitelist)
+const allowedOrigins = [
+    "https://certifyme.me",
+    "https://www.certifyme.me",
+    "http://localhost:5173",
+];
+
 app.use(cors({
-    origin: process.env.FRONTEND_URL,
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            console.warn("❌ Blocked CORS for origin:", origin);
+            callback(new Error("Not allowed by CORS"));
+        }
+    },
     credentials: true,
 }));
+
+// (опціонально, але бажано)
+app.options("*", cors());
+
 
 // 📨 Stripe Webhook має бачити сире тіло (Buffer)!
 // ТОМУ цей маршрут реєструємо ДО app.use(express.json())
