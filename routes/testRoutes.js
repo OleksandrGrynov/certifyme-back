@@ -131,10 +131,158 @@ router.put("/:id/questions", authMiddleware, isAdmin, async (req, res) => {
     }
 });
 
+router.get("/public/:id", async (req, res) => {
+    try {
+        const testId = Number(req.params.id);
+
+        const test = await prisma.test.findUnique({
+            where: { id: testId },
+            include: {
+                questions: {
+                    take: 3, // показуємо тільки кілька питань
+                    include: {
+                        answers: {
+                            take: 3,
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!test) {
+            return res.status(404).json({ success: false, message: "Test not found" });
+        }
+
+        // 🧠 Форматуємо поля під фронт
+        const formattedQuestions = test.questions.map((q) => ({
+            id: q.id,
+            question_ua: q.questionUa,
+            question_en: q.questionEn,
+            answers: q.answers.map((a) => ({
+                id: a.id,
+                answer_ua: a.answerUa,
+                answer_en: a.answerEn,
+                is_correct: a.isCorrect,
+            })),
+        }));
+
+        const formattedTest = {
+            id: test.id,
+            title_ua: test.titleUa,
+            title_en: test.titleEn,
+            description_ua: test.descriptionUa,
+            description_en: test.descriptionEn,
+            price: test.price,
+            image_url: test.imageUrl,
+            questions: formattedQuestions,
+        };
+
+        res.json({ success: true, test: formattedTest });
+    } catch (err) {
+        console.error("❌ getPublicTest error:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+
 
 /* ────────────────────────────────────────────────────────────────
    📘 Отримати тест за ID — завжди останній!
    ──────────────────────────────────────────────────────────────── */
-router.get("/:id", getTestById);
+router.get("/:id", authMiddleware, async (req, res) => {
+    try {
+        const testId = Number(req.params.id);
+        const userId = req.user.id;
+
+        const test = await prisma.test.findUnique({
+            where: { id: testId },
+            include: {
+                questions: {
+                    include: {
+                        answers: true,
+                    },
+                },
+            },
+        });
+
+        if (!test) {
+            return res.status(404).json({ success: false, message: "Test not found" });
+        }
+
+        // 🟢 Якщо тест безкоштовний — віддаємо одразу
+        if (test.price === 0) {
+            const formattedQuestions = test.questions.map((q) => ({
+                id: q.id,
+                question_ua: q.questionUa,
+                question_en: q.questionEn,
+                answers: q.answers.map((a) => ({
+                    id: a.id,
+                    answer_ua: a.answerUa,
+                    answer_en: a.answerEn,
+                    is_correct: a.isCorrect,
+                })),
+            }));
+
+            return res.json({
+                success: true,
+                test: {
+                    ...test,
+                    title_ua: test.titleUa,
+                    title_en: test.titleEn,
+                    description_ua: test.descriptionUa,
+                    description_en: test.descriptionEn,
+                    questions: formattedQuestions,
+                },
+            });
+        }
+
+        // 🔐 Перевіряємо, чи користувач оплатив тест
+        const payment = await prisma.payment.findFirst({
+            where: {
+                userId,
+                testId,
+                status: { in: ["paid", "succeeded", "success", "completed"] },
+            },
+        });
+
+        if (!payment) {
+            return res.status(403).json({
+                success: false,
+                message: "Access denied. Test not purchased.",
+            });
+        }
+
+        // ✅ Все добре — форматований варіант для платного тесту
+        const formattedQuestions = test.questions.map((q) => ({
+            id: q.id,
+            question_ua: q.questionUa,
+            question_en: q.questionEn,
+            answers: q.answers.map((a) => ({
+                id: a.id,
+                answer_ua: a.answerUa,
+                answer_en: a.answerEn,
+                is_correct: a.isCorrect,
+            })),
+        }));
+
+        res.json({
+            success: true,
+            test: {
+                ...test,
+                title_ua: test.titleUa,
+                title_en: test.titleEn,
+                description_ua: test.descriptionUa,
+                description_en: test.descriptionEn,
+                questions: formattedQuestions,
+            },
+        });
+    } catch (err) {
+        console.error("❌ getTestById error:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+
+
 
 export default router;
