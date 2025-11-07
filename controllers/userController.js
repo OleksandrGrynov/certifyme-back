@@ -51,23 +51,33 @@ async function sendOtpEmail(email, otp) {
 export const registerUser = async (req, res) => {
     try {
         const { first_name, last_name, email, password } = req.body;
-        if (!first_name || !last_name || !email || !password)
-            if (!validatePassword(password)) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Пароль має містити мінімум 6 символів, одну велику літеру, цифру та спеціальний символ",
-                });
-            }
 
-        return res
-                .status(400)
-                .json({ success: false, message: "Будь ласка, заповніть усі поля (імʼя, прізвище, email, пароль)" });
+        // 🔹 1. Перевіряємо, чи всі поля заповнені
+        if (!first_name || !last_name || !email || !password) {
+            return res.status(400).json({
+                success: false,
+                message: "Будь ласка, заповніть усі поля (імʼя, прізвище, email, пароль)",
+            });
+        }
 
+        // 🔹 2. Перевіряємо складність пароля
+        if (!validatePassword(password)) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Пароль має містити мінімум 6 символів, одну велику літеру, цифру та спецсимвол (наприклад: !, @, #, ., ,)",
+            });
+        }
+
+        // 🔹 3. Перевіряємо, чи існує користувач
         const existing = await prisma.user.findUnique({ where: { email } });
-        if (existing)
-            return res.status(400).json({ success: false, message: "Email вже використовується" });
+        if (existing) {
+            return res
+                .status(400)
+                .json({ success: false, message: "Email вже використовується" });
+        }
 
+        // 🔹 4. Хешуємо пароль і створюємо OTP
         const hashed = await bcrypt.hash(password, 10);
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         const expires = new Date(Date.now() + 10 * 60 * 1000);
@@ -88,7 +98,7 @@ export const registerUser = async (req, res) => {
         await initUserAchievements(user.id);
         await sendOtpEmail(email, otp);
 
-        res.json({
+        return res.json({
             success: true,
             message:
                 "✅ Код підтвердження надіслано на пошту. Перевірте пошту та введіть 6 цифр.",
@@ -98,6 +108,7 @@ export const registerUser = async (req, res) => {
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
+
 
 // ======================================================
 // 🔹 Перевірка OTP-коду
