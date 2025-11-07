@@ -351,17 +351,38 @@ export const updateTest = async (req, res) => {
     }
 };
 
-// 📜 Перевірка сертифіката
 export const verifyCertificate = async (req, res) => {
     try {
         const cert = await prisma.certificate.findUnique({
             where: { certId: req.params.cert_id },
             include: { user: true },
         });
-        if (!cert)
-            return res.status(404).json({ success: false, message: "❌ Сертифікат не знайдено" });
 
+        if (!cert)
+            return res.status(404).json({
+                success: false,
+                message: "❌ Сертифікат не знайдено / Certificate not found",
+            });
+
+        // 🕓 Перевірка чи сертифікат прострочений
         const expired = new Date() > cert.expires;
+
+        // 🌍 Автоматичне визначення мови (пріоритет: query → заголовок → ua)
+        const lang =
+            req.query.lang === "en" ||
+            req.headers["accept-language"]?.toLowerCase().startsWith("en")
+                ? "en"
+                : "ua";
+
+        // 💬 Переклади статусу
+        const statusUa = expired
+            ? "Сертифікат прострочений ❌"
+            : "Дійсний сертифікат ✅";
+        const statusEn = expired
+            ? "Certificate expired ❌"
+            : "Certificate is valid ✅";
+
+        // 📤 Відповідь
         res.json({
             success: true,
             valid: !expired,
@@ -369,17 +390,23 @@ export const verifyCertificate = async (req, res) => {
             name: cert.user
                 ? `${cert.user.firstName} ${cert.user.lastName}`
                 : cert.userName,
-            course: cert.course,
-            issued: new Date(cert.issued).toLocaleDateString("uk-UA"),
-            expires: new Date(cert.expires).toLocaleDateString("uk-UA"),
+            course: lang === "en" ? cert.courseEn || cert.course : cert.course,
+            issued: new Date(cert.issued).toLocaleDateString(
+                lang === "ua" ? "uk-UA" : "en-US"
+            ),
+            expires: new Date(cert.expires).toLocaleDateString(
+                lang === "ua" ? "uk-UA" : "en-US"
+            ),
             percent: cert.percent,
-            status: expired ? "Сертифікат прострочений" : "Дійсний сертифікат ✅",
+            status: lang === "en" ? statusEn : statusUa,
         });
     } catch (err) {
         console.error("❌ verifyCertificate error:", err);
         res.status(500).json({ success: false });
     }
 };
+
+
 
 // 📜 Усі сертифікати користувача
 export const getUserCertificates = async (req, res) => {
