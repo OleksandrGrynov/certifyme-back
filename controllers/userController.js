@@ -11,6 +11,15 @@ dotenv.config();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 // ======================================================
+// 🧠 Перевірка складності пароля
+// Мінімум 6 символів, 1 велика літера, 1 цифра, 1 спецсимвол
+// ======================================================
+function validatePassword(password) {
+    const regex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_\-+=<>?{}[\]~.,]).{6,}$/;
+    return regex.test(password);
+}
+
+// ======================================================
 // 📩 Надсилання OTP-коду (6 цифр)
 // ======================================================
 async function sendOtpEmail(email, otp) {
@@ -43,7 +52,15 @@ export const registerUser = async (req, res) => {
     try {
         const { first_name, last_name, email, password } = req.body;
         if (!first_name || !last_name || !email || !password)
-            return res
+            if (!validatePassword(password)) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Пароль має містити мінімум 6 символів, одну велику літеру, цифру та спеціальний символ",
+                });
+            }
+
+        return res
                 .status(400)
                 .json({ success: false, message: "Будь ласка, заповніть усі поля (імʼя, прізвище, email, пароль)" });
 
@@ -295,6 +312,13 @@ export const changePassword = async (req, res) => {
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const { oldPassword, newPassword } = req.body;
+        if (!validatePassword(newPassword)) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Новий пароль має містити мінімум 6 символів, одну велику літеру, цифру та спеціальний символ",
+            });
+        }
 
         const user = await prisma.user.findUnique({
             where: { id: decoded.id },
@@ -337,7 +361,15 @@ export const setPassword = async (req, res) => {
         const { newPassword } = req.body;
 
         if (!newPassword)
-            return res
+            if (!validatePassword(newPassword)) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Пароль має містити мінімум 6 символів, одну велику літеру, цифру та спеціальний символ",
+                });
+            }
+
+        return res
                 .status(400)
                 .json({ success: false, message: "Поле newPassword обов'язкове" });
 
@@ -422,7 +454,15 @@ export const resetPassword = async (req, res) => {
     try {
         const { token, newPassword } = req.body;
         if (!token || !newPassword)
-            return res
+            if (!validatePassword(newPassword)) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Новий пароль має містити мінімум 6 символів, одну велику літеру, цифру та спеціальний символ",
+                });
+            }
+
+        return res
                 .status(400)
                 .json({ success: false, message: "Немає токена або нового пароля" });
 
