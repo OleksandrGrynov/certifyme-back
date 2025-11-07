@@ -464,43 +464,70 @@ export const forgotPassword = async (req, res) => {
 export const resetPassword = async (req, res) => {
     try {
         const { token, newPassword } = req.body;
-        if (!token || !newPassword)
-            if (!validatePassword(newPassword)) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Новий пароль має містити мінімум 6 символів, одну велику літеру, цифру та спеціальний символ",
-                });
-            }
 
-        return res
-                .status(400)
-                .json({ success: false, message: "Немає токена або нового пароля" });
+        // 🔹 1. Перевірка наявності токена і нового пароля
+        if (!token || !newPassword) {
+            return res.status(400).json({
+                success: false,
+                message: "Немає токена або нового пароля",
+            });
+        }
 
+        // 🔹 2. Перевірка складності нового пароля
+        if (!validatePassword(newPassword)) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Новий пароль має містити мінімум 6 символів, одну велику літеру, цифру та спеціальний символ",
+            });
+        }
+
+        // 🔹 3. Перевірка токена в базі
         const user = await prisma.user.findFirst({
             where: { resetToken: token },
             select: { id: true, resetExpires: true },
         });
 
-        if (!user)
-            return res.status(400).json({ success: false, message: "Невірний токен" });
-        if (user.resetExpires && new Date() > user.resetExpires)
-            return res
-                .status(400)
-                .json({ success: false, message: "Токен прострочений" });
+        if (!user) {
+            return res.status(400).json({
+                success: false,
+                message: "Невірний токен",
+            });
+        }
 
+        // 🔹 4. Перевірка терміну дії токена
+        if (user.resetExpires && new Date() > user.resetExpires) {
+            return res.status(400).json({
+                success: false,
+                message: "⏰ Токен прострочений",
+            });
+        }
+
+        // 🔹 5. Хешуємо і оновлюємо пароль
         const hashed = await bcrypt.hash(newPassword, 10);
         await prisma.user.update({
             where: { id: user.id },
-            data: { password: hashed, resetToken: null, resetExpires: null },
+            data: {
+                password: hashed,
+                resetToken: null,
+                resetExpires: null,
+            },
         });
 
-        res.json({ success: true, message: "Пароль успішно змінено ✅" });
+        // 🔹 6. Відповідь успіху
+        return res.json({
+            success: true,
+            message: "Пароль успішно змінено ✅",
+        });
     } catch (err) {
         console.error("❌ resetPassword error:", err);
-        res.status(500).json({ success: false, message: "Server error" });
+        return res.status(500).json({
+            success: false,
+            message: "Server error",
+        });
     }
 };
+
 
 // ======================================================
 // 🧾 Grant access to test (force success stub mode)
