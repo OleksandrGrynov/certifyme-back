@@ -185,7 +185,7 @@ router.get("/public/:id", async (req, res) => {
 });
 
 
-
+router.get("/admin/:id", authMiddleware, isAdmin, getTestById);
 /* ────────────────────────────────────────────────────────────────
    📘 Отримати тест за ID — завжди останній!
    ──────────────────────────────────────────────────────────────── */
@@ -210,7 +210,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
         }
 
         // 🟢 Якщо тест безкоштовний — віддаємо одразу
-        if (test.price === 0) {
+        if (!test.priceCents || test.priceCents === 0) {
             const formattedQuestions = test.questions.map((q) => ({
                 id: q.id,
                 question_ua: q.questionUa,
@@ -236,7 +236,12 @@ router.get("/:id", authMiddleware, async (req, res) => {
             });
         }
 
-        // 🔐 Перевіряємо, чи користувач оплатив тест
+        // 🟩 Перевіряємо, чи користувач має доступ вручну (user_tests)
+        const manualAccess = await prisma.userTest.findFirst({
+            where: { userId, testId, isUnlocked: true },
+        });
+
+        // 🔐 Перевіряємо оплату (якщо немає manualAccess)
         const payment = await prisma.payment.findFirst({
             where: {
                 userId,
@@ -245,14 +250,15 @@ router.get("/:id", authMiddleware, async (req, res) => {
             },
         });
 
-        if (!payment) {
+        // 🚫 Якщо ні оплати, ні ручного доступу — відмовляємо
+        if (!payment && !manualAccess) {
             return res.status(403).json({
                 success: false,
                 message: "Access denied. Test not purchased.",
             });
         }
 
-        // ✅ Все добре — форматований варіант для платного тесту
+        // ✅ Все добре — форматований варіант для платного або відкритого тесту
         const formattedQuestions = test.questions.map((q) => ({
             id: q.id,
             question_ua: q.questionUa,
@@ -281,6 +287,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
+
 
 
 

@@ -53,8 +53,8 @@ export const createTest = async (req, res) => {
                 descriptionUa: description_ua,
                 descriptionEn: description_en,
                 imageUrl: image_url,
-                priceCents: Number(price_cents) || 0, // ✅ тепер працює
-                currency: currency || "usd",           // ✅ тепер зберігається
+                priceCents: Number(price_cents) || 0,
+                currency: currency || "usd",
                 createdAt: new Date(),
             },
         });
@@ -87,12 +87,40 @@ export const createTest = async (req, res) => {
             }
         }
 
-        res.json({ success: true, message: "✅ Тест створено з авто-перекладом" });
+        // 🎁 Якщо тест безкоштовний — автоматично надаємо всім користувачам
+        const isFree = !price_cents || Number(price_cents) === 0;
+        if (isFree) {
+            try {
+                const users = await prisma.user.findMany({ select: { id: true } });
+                if (users.length > 0) {
+                    await prisma.userTest.createMany({
+                        data: users.map((u) => ({
+                            userId: u.id,
+                            testId: test.id,
+                            isUnlocked: true,
+                        })),
+                        skipDuplicates: true,
+                    });
+                    console.log(`✅ Безкоштовний тест "${title_ua}" додано ${users.length} користувачам`);
+                }
+            } catch (err) {
+                console.error("⚠️ Не вдалося призначити безкоштовний тест всім:", err.message);
+            }
+        }
+
+        res.json({
+            success: true,
+            message: isFree
+                ? "✅ Тест створено та відкрито для всіх користувачів"
+                : "✅ Тест створено з авто-перекладом",
+            test,
+        });
     } catch (err) {
         console.error("❌ createTest error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
+
 
 
 // 📘 Отримати тест з питаннями та відповідями
