@@ -371,25 +371,28 @@ export const setPassword = async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const { newPassword } = req.body;
 
-        if (!newPassword)
-            if (!validatePassword(newPassword)) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Пароль має містити мінімум 6 символів, одну велику літеру, цифру та спеціальний символ",
-                });
-            }
-
-        return res
+        if (!newPassword) {
+            return res
                 .status(400)
                 .json({ success: false, message: "Поле newPassword обов'язкове" });
+        }
+
+        if (!validatePassword(newPassword)) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Пароль має містити мінімум 6 символів, одну велику літеру, цифру та спеціальний символ",
+            });
+        }
 
         const user = await prisma.user.findUnique({
             where: { id: decoded.id },
             select: { id: true },
         });
         if (!user)
-            return res.status(404).json({ success: false, message: "Користувача не знайдено" });
+            return res
+                .status(404)
+                .json({ success: false, message: "Користувача не знайдено" });
 
         const hashed = await bcrypt.hash(newPassword, 10);
         await prisma.user.update({
@@ -397,12 +400,13 @@ export const setPassword = async (req, res) => {
             data: { password: hashed },
         });
 
-        res.json({ success: true, message: "Пароль успішно створено ✅" });
+        res.json({ success: true, message: "Пароль успішно створено " });
     } catch (err) {
-        console.error("❌ setPassword error:", err);
+        console.error(" setPassword error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
+
 
 // ======================================================
 // 📩 Відновлення пароля — запит на скидання
