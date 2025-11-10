@@ -1,14 +1,12 @@
 import OpenAI from "openai";
 import dotenv from "dotenv";
 import axios from "axios";
-import prisma from "../config/prisma.js"; // ✅ Prisma ORM
+import prisma from "../config/prisma.js"; 
 dotenv.config();
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-/* ======================================================
-   🌍 Безкоштовний переклад через Google Translate API
-   ====================================================== */
+
 async function translateText(text, from = "uk", to = "en") {
     if (!text || !text.trim()) return text;
     try {
@@ -25,14 +23,12 @@ async function translateText(text, from = "uk", to = "en") {
         const translated = response.data?.[0]?.map((a) => a[0]).join(" ");
         return translated || text;
     } catch (err) {
-        console.error("❌ translateText error:", err.message);
+        console.error(" translateText error:", err.message);
         return text;
     }
 }
 
-/* ======================================================
-   🧠 Генерація або отримання пояснення з БД через Prisma
-   ====================================================== */
+
 export const explainOneQuestion = async (req, res) => {
     try {
         const { question, options, correct, userAnswer } = req.body;
@@ -40,18 +36,18 @@ export const explainOneQuestion = async (req, res) => {
         if (!question || !options || !correct) {
             return res.status(400).json({
                 success: false,
-                message: "❌ Не передано дані питання",
+                message: " Не передано дані питання",
             });
         }
 
-        // 🔍 1. Перевіряємо, чи вже є пояснення
+        
         const existing = await prisma.explanation.findFirst({
             where: { questionTextUa: question.trim() },
             select: { explanationUa: true, explanationEn: true },
         });
 
         if (existing) {
-            console.log("✅ Взято з БД (кеш)");
+            console.log(" Взято з БД (кеш)");
             return res.json({
                 success: true,
                 explanation_ua: existing.explanationUa,
@@ -60,7 +56,7 @@ export const explainOneQuestion = async (req, res) => {
             });
         }
 
-        // 🧩 2. Формуємо запит до GPT українською
+        
         const prompt = `
 Ти — досвідчений викладач програмування.
 Поясни коротко українською мовою:
@@ -85,7 +81,7 @@ export const explainOneQuestion = async (req, res) => {
         const explanationEn = await translateText(explanationUa, "uk", "en");
         const questionEn = await translateText(question, "uk", "en");
 
-        // 💾 3. Зберігаємо нове пояснення у базу
+        
         await prisma.explanation.create({
             data: {
                 questionTextUa: question.trim(),
@@ -104,10 +100,10 @@ export const explainOneQuestion = async (req, res) => {
             cached: false,
         });
     } catch (err) {
-        console.error("❌ explainOneQuestion error:", err);
+        console.error(" explainOneQuestion error:", err);
         res.status(500).json({
             success: false,
-            message: "❌ Не вдалося отримати пояснення. Перевір ключ або баланс.",
+            message: " Не вдалося отримати пояснення. Перевір ключ або баланс.",
         });
     }
 };

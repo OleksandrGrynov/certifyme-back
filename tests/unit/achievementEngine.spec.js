@@ -29,7 +29,7 @@ await jest.unstable_mockModule('../../config/prisma.js', () => ({
   }
 }));
 
-// Mock initial achievements
+
 achievementsState.push({ id:1, code:'tests_1', conditionType:'tests_passed', conditionValue:1 });
 achievementsState.push({ id:2, code:'certs_1', conditionType:'certificates', conditionValue:1 });
 

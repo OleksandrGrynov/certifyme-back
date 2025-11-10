@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 
-// Prisma mock minimal for webhook usage (if used)
+
 await jest.unstable_mockModule('../../config/prisma.js', () => ({
   __esModule: true,
   default: {
@@ -15,7 +15,7 @@ await jest.unstable_mockModule('../../config/prisma.js', () => ({
   }
 }));
 
-// Stripe SDK or signature verification might be inside controller; we stub them if imported
+
 await jest.unstable_mockModule('stripe', () => ({ __esModule: true, default: function(){ return {}; } }));
 
 const ctrl = await import('../../controllers/paymentController.js').catch(() => ({}));

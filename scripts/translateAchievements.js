@@ -20,9 +20,9 @@ async function translateMissing() {
                     data: { titleEn, descriptionEn },
                 });
 
-                console.log(`✅ ${a.titleUa} → ${titleEn}`);
+                console.log(` ${a.titleUa} → ${titleEn}`);
             } catch (err) {
-                console.error(`❌ Error translating ID ${a.id}:`, err.message);
+                console.error(` Error translating ID ${a.id}:`, err.message);
             }
         }
     }

@@ -1,4 +1,4 @@
-// controllers/userController.js
+
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
@@ -10,18 +10,18 @@ import dotenv from "dotenv";
 dotenv.config();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// ======================================================
-// 🧠 Перевірка складності пароля
-// Мінімум 6 символів, 1 велика літера, 1 цифра, 1 спецсимвол
-// ======================================================
+
+
+
+
 function validatePassword(password) {
     const regex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_\-+=<>?{}[\]~.,]).{6,}$/;
     return regex.test(password);
 }
 
-// ======================================================
-// 📩 Надсилання OTP-коду (6 цифр)
-// ======================================================
+
+
+
 async function sendOtpEmail(email, otp) {
     const html = `
     <div style="font-family:sans-serif;padding:20px;background:#111;color:#eee;border-radius:10px;">
@@ -39,20 +39,20 @@ async function sendOtpEmail(email, otp) {
             subject: "Код підтвердження | CertifyMe",
             html,
         });
-        console.log("✅ OTP email sent:", email);
+        console.log(" OTP email sent:", email);
     } catch (err) {
-        console.error("❌ OTP email send error:", err);
+        console.error(" OTP email send error:", err);
     }
 }
 
-// ======================================================
-// 🔹 Реєстрація користувача (створюємо OTP)
-// ======================================================
+
+
+
 export const registerUser = async (req, res) => {
     try {
         const { first_name, last_name, email, password } = req.body;
 
-        // 🔹 1. Перевіряємо, чи всі поля заповнені
+        
         if (!first_name || !last_name || !email || !password) {
             return res.status(400).json({
                 success: false,
@@ -60,7 +60,7 @@ export const registerUser = async (req, res) => {
             });
         }
 
-        // 🔹 2. Перевіряємо складність пароля
+        
         if (!validatePassword(password)) {
             return res.status(400).json({
                 success: false,
@@ -69,7 +69,7 @@ export const registerUser = async (req, res) => {
             });
         }
 
-        // 🔹 3. Перевіряємо, чи існує користувач
+        
         const existing = await prisma.user.findUnique({ where: { email } });
         if (existing) {
             return res
@@ -77,7 +77,7 @@ export const registerUser = async (req, res) => {
                 .json({ success: false, message: "Email вже використовується" });
         }
 
-        // 🔹 4. Хешуємо пароль і створюємо OTP
+        
         const hashed = await bcrypt.hash(password, 10);
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         const expires = new Date(Date.now() + 10 * 60 * 1000);
@@ -101,18 +101,18 @@ export const registerUser = async (req, res) => {
         return res.json({
             success: true,
             message:
-                "✅ Код підтвердження надіслано на пошту. Перевірте пошту та введіть 6 цифр.",
+                " Код підтвердження надіслано на пошту. Перевірте пошту та введіть 6 цифр.",
         });
     } catch (err) {
-        console.error("❌ registerUser error:", err);
+        console.error(" registerUser error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
 
-// ======================================================
-// 🔹 Перевірка OTP-коду
-// ======================================================
+
+
+
 export const verifyOtp = async (req, res) => {
     try {
         const { email, otp } = req.body;
@@ -121,7 +121,7 @@ export const verifyOtp = async (req, res) => {
 
         const user = await prisma.user.findFirst({ where: { email, otpCode: otp } });
         if (!user)
-            return res.status(400).json({ success: false, message: "❌ Невірний код підтвердження" });
+            return res.status(400).json({ success: false, message: " Невірний код підтвердження" });
 
         if (user.otpExpires && new Date() > user.otpExpires)
             return res
@@ -146,7 +146,7 @@ export const verifyOtp = async (req, res) => {
 
         res.json({
             success: true,
-            message: "✅ Акаунт підтверджено. Вхід виконано.",
+            message: " Акаунт підтверджено. Вхід виконано.",
             token,
             user: {
                 id: user.id,
@@ -157,14 +157,14 @@ export const verifyOtp = async (req, res) => {
             },
         });
     } catch (err) {
-        console.error("❌ verifyOtp error:", err);
+        console.error(" verifyOtp error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
-// ======================================================
-// 🔹 Логін користувача (після підтвердження OTP)
-// ======================================================
+
+
+
 export const loginUser = async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -195,7 +195,7 @@ export const loginUser = async (req, res) => {
 
         res.json({
             success: true,
-            message: "Вхід успішний ✅",
+            message: "Вхід успішний ",
             token,
             user: {
                 id: user.id,
@@ -207,14 +207,14 @@ export const loginUser = async (req, res) => {
             },
         });
     } catch (err) {
-        console.error("❌ loginUser error:", err);
+        console.error(" loginUser error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
-// ======================================================
-// 🔹 Отримати поточного користувача
-// ======================================================
+
+
+
 export const getCurrentUser = async (req, res) => {
     try {
         const token = req.headers.authorization?.split(" ")[1];
@@ -253,14 +253,14 @@ export const getCurrentUser = async (req, res) => {
             },
         });
     } catch (err) {
-        console.error("❌ getCurrentUser error:", err);
+        console.error(" getCurrentUser error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
-// ======================================================
-// 🔹 Оновлення профілю
-// ======================================================
+
+
+
 export const updateProfile = async (req, res) => {
     try {
         const token = req.headers.authorization?.split(" ")[1];
@@ -293,7 +293,7 @@ export const updateProfile = async (req, res) => {
 
         res.json({
             success: true,
-            message: "Профіль оновлено ✅",
+            message: "Профіль оновлено ",
             user: {
                 id: user.id,
                 first_name: user.firstName,
@@ -305,14 +305,14 @@ export const updateProfile = async (req, res) => {
             },
         });
     } catch (err) {
-        console.error("❌ updateProfile error:", err);
+        console.error(" updateProfile error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
-// ======================================================
-// 🔒 Зміна пароля
-// ======================================================
+
+
+
 export const changePassword = async (req, res) => {
     try {
         const token = req.headers.authorization?.split(" ")[1];
@@ -350,16 +350,16 @@ export const changePassword = async (req, res) => {
             data: { password: hashed },
         });
 
-        res.json({ success: true, message: "Пароль успішно змінено ✅" });
+        res.json({ success: true, message: "Пароль успішно змінено " });
     } catch (err) {
-        console.error("❌ changePassword error:", err);
+        console.error(" changePassword error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
-// ======================================================
-// 🔑 Встановлення пароля після Google-авторизації
-// ======================================================
+
+
+
 export const setPassword = async (req, res) => {
     try {
         const token = req.headers.authorization?.split(" ")[1];
@@ -408,9 +408,9 @@ export const setPassword = async (req, res) => {
 };
 
 
-// ======================================================
-// 📩 Відновлення пароля — запит на скидання
-// ======================================================
+
+
+
 export const forgotPassword = async (req, res) => {
     try {
         const { email } = req.body;
@@ -457,19 +457,19 @@ export const forgotPassword = async (req, res) => {
             message: "📨 Лист із інструкцією надіслано на пошту.",
         });
     } catch (err) {
-        console.error("❌ forgotPassword error:", err);
+        console.error(" forgotPassword error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
-// ======================================================
-// 🔑 Встановлення нового пароля після переходу з листа
-// ======================================================
+
+
+
 export const resetPassword = async (req, res) => {
     try {
         const { token, newPassword } = req.body;
 
-        // 🔹 1. Перевірка наявності токена і нового пароля
+        
         if (!token || !newPassword) {
             return res.status(400).json({
                 success: false,
@@ -477,7 +477,7 @@ export const resetPassword = async (req, res) => {
             });
         }
 
-        // 🔹 2. Перевірка складності нового пароля
+        
         if (!validatePassword(newPassword)) {
             return res.status(400).json({
                 success: false,
@@ -486,7 +486,7 @@ export const resetPassword = async (req, res) => {
             });
         }
 
-        // 🔹 3. Перевірка токена в базі
+        
         const user = await prisma.user.findFirst({
             where: { resetToken: token },
             select: { id: true, resetExpires: true },
@@ -499,7 +499,7 @@ export const resetPassword = async (req, res) => {
             });
         }
 
-        // 🔹 4. Перевірка терміну дії токена
+        
         if (user.resetExpires && new Date() > user.resetExpires) {
             return res.status(400).json({
                 success: false,
@@ -507,7 +507,7 @@ export const resetPassword = async (req, res) => {
             });
         }
 
-        // 🔹 5. Хешуємо і оновлюємо пароль
+        
         const hashed = await bcrypt.hash(newPassword, 10);
         await prisma.user.update({
             where: { id: user.id },
@@ -518,13 +518,13 @@ export const resetPassword = async (req, res) => {
             },
         });
 
-        // 🔹 6. Відповідь успіху
+        
         return res.json({
             success: true,
-            message: "Пароль успішно змінено ✅",
+            message: "Пароль успішно змінено ",
         });
     } catch (err) {
-        console.error("❌ resetPassword error:", err);
+        console.error(" resetPassword error:", err);
         return res.status(500).json({
             success: false,
             message: "Server error",
@@ -533,9 +533,9 @@ export const resetPassword = async (req, res) => {
 };
 
 
-// ======================================================
-// 🧾 Grant access to test (force success stub mode)
-// ======================================================
+
+
+
 export const grantUserTest = async (req, res) => {
     try {
         const { testId } = req.body;
@@ -573,9 +573,9 @@ export const grantUserTest = async (req, res) => {
             update: { isUnlocked: true },
         });
 
-        res.json({ success: true, message: "✅ Payment forced to succeeded, test unlocked" });
+        res.json({ success: true, message: " Payment forced to succeeded, test unlocked" });
     } catch (err) {
-        console.error("❌ grantUserTest error:", err);
+        console.error(" grantUserTest error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };

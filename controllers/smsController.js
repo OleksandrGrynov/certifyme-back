@@ -1,16 +1,13 @@
 import twilio from "twilio";
 import prisma from "../config/prisma.js";
 
-// 🔐 ініціалізація Twilio клієнта
+
 const client = twilio(
     process.env.TWILIO_ACCOUNT_SID,
     process.env.TWILIO_AUTH_TOKEN
 );
 
-/**
- * 📩 Надсилання рекламного SMS усім підписникам
- * (доступно лише адміну)
- */
+
 export const sendPromoSMS = async (req, res) => {
     try {
         const { message } = req.body;
@@ -20,7 +17,7 @@ export const sendPromoSMS = async (req, res) => {
                 .json({ success: false, message: "Повідомлення не може бути порожнім" });
         }
 
-        // 🔹 Отримуємо всі номери з бази через Prisma
+        
         const subs = await prisma.smsSubscription.findMany({
             select: { phone: true },
         });
@@ -34,7 +31,7 @@ export const sendPromoSMS = async (req, res) => {
 
         let sentCount = 0;
 
-        // 🔁 Відправляємо кожному унікальному номеру
+        
         const uniquePhones = [...new Set(subs.map((s) => s.phone))];
 
         for (const phone of uniquePhones) {
@@ -53,10 +50,10 @@ export const sendPromoSMS = async (req, res) => {
 
         res.json({
             success: true,
-            message: `✅ Розсилка виконана: ${sentCount}/${uniquePhones.length} повідомлень`,
+            message: ` Розсилка виконана: ${sentCount}/${uniquePhones.length} повідомлень`,
         });
     } catch (err) {
-        console.error("❌ sendPromoSMS error:", err);
+        console.error(" sendPromoSMS error:", err);
         res
             .status(500)
             .json({ success: false, message: "Помилка сервера при надсиланні SMS" });

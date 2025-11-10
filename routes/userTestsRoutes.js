@@ -4,9 +4,7 @@ import prisma from "../config/prisma.js";
 
 const router = express.Router();
 
-/* ────────────────────────────────────────────────────────────────
-   📘 GET /user/tests — усі тести, на які користувач має доступ
-   ──────────────────────────────────────────────────────────────── */
+
 router.get("/tests", authMiddleware, async (req, res) => {
     try {
         const tests = await prisma.userTest.findMany({
@@ -16,16 +14,14 @@ router.get("/tests", authMiddleware, async (req, res) => {
         });
         res.json({ testIds: tests.map((t) => t.testId) });
     } catch (err) {
-        console.error("❌ user/tests error:", err);
+        console.error(" user/tests error:", err);
         res
             .status(500)
             .json({ success: false, message: "Помилка при отриманні тестів" });
     }
 });
 
-/* ────────────────────────────────────────────────────────────────
-   🔍 GET /user/tests/check/:testId — чи має користувач доступ
-   ──────────────────────────────────────────────────────────────── */
+
 router.get("/tests/check/:testId", authMiddleware, async (req, res) => {
     try {
         const testId = Number(req.params.testId);
@@ -41,17 +37,13 @@ router.get("/tests/check/:testId", authMiddleware, async (req, res) => {
 
         res.json({ hasAccess: Boolean(exists) });
     } catch (err) {
-        console.error("❌ check access error:", err);
+        console.error(" check access error:", err);
         res.status(500).json({ success: false, hasAccess: false });
     }
 });
 
-/* ────────────────────────────────────────────────────────────────
-   🟢 POST /user/tests/grant — надати користувачу доступ до тесту
-   ──────────────────────────────────────────────────────────────── */
-/* ────────────────────────────────────────────────────────────────
-   🟢 POST /user/tests/grant — надати користувачу доступ до тесту
-   ──────────────────────────────────────────────────────────────── */
+
+
 router.post("/tests/grant", authMiddleware, async (req, res) => {
     try {
         const { testId } = req.body;
@@ -60,7 +52,7 @@ router.post("/tests/grant", authMiddleware, async (req, res) => {
         if (!testId) {
             return res
                 .status(400)
-                .json({ success: false, message: "❌ testId required" });
+                .json({ success: false, message: " testId required" });
         }
 
         const existing = await prisma.userTest.findUnique({
@@ -68,7 +60,7 @@ router.post("/tests/grant", authMiddleware, async (req, res) => {
         });
 
         if (existing) {
-            // 🔁 якщо запис уже є — просто кажемо фронту, що все добре
+            
             return res.json({
                 success: true,
                 message: "⚠️ Access already granted",
@@ -85,9 +77,9 @@ router.post("/tests/grant", authMiddleware, async (req, res) => {
             },
         });
 
-        res.json({ success: true, message: "✅ Access granted successfully" });
+        res.json({ success: true, message: " Access granted successfully" });
     } catch (err) {
-        console.error("❌ grant test access error:", err);
+        console.error(" grant test access error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });

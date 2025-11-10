@@ -1,4 +1,4 @@
-//testController.js
+
 import prisma from "../config/prisma.js";
 import axios from "axios";
 import jwt from "jsonwebtoken";
@@ -6,7 +6,7 @@ import fs from "fs";
 import path from "path";
 import { checkAchievements } from "../utils/achievementEngine.js";
 import { generateCertificatePDF } from "../utils/certificateGenerator.js";
-// 🌍 Автоматичний переклад через Google Translate
+
 async function translateText(text, from = "uk", to = "en") {
     if (!text?.trim()) return text;
     try {
@@ -16,12 +16,12 @@ async function translateText(text, from = "uk", to = "en") {
         });
         return res.data?.[0]?.[0]?.[0] || text;
     } catch (err) {
-        console.error("❌ translateText error:", err.message);
+        console.error(" translateText error:", err.message);
         return text;
     }
 }
 
-// 🧩 Створення тесту
+
 export const createTest = async (req, res) => {
     try {
         let {
@@ -33,19 +33,19 @@ export const createTest = async (req, res) => {
             questions,
             title,
             description,
-            price_cents, // ✅ додано
-            currency,    // ✅ додано
+            price_cents, 
+            currency,    
         } = req.body;
 
-        // 🧠 Підстраховка для назв / описів
+        
         title_ua = title_ua || title || "Без назви";
         description_ua = description_ua || description || "";
 
-        // 🌍 Автоматичний переклад, якщо англ. не заповнено
+        
         title_en = title_en?.trim() || (await translateText(title_ua));
         description_en = description_en?.trim() || (await translateText(description_ua));
 
-        // 💾 Створення тесту
+        
         const test = await prisma.test.create({
             data: {
                 titleUa: title_ua,
@@ -59,7 +59,7 @@ export const createTest = async (req, res) => {
             },
         });
 
-        // 🧩 Збереження питань та відповідей
+        
         if (Array.isArray(questions)) {
             for (const q of questions) {
                 const questionUa = q.question_ua || q.text || "";
@@ -87,7 +87,7 @@ export const createTest = async (req, res) => {
             }
         }
 
-        // 🎁 Якщо тест безкоштовний — автоматично надаємо всім користувачам
+        
         const isFree = !price_cents || Number(price_cents) === 0;
         if (isFree) {
             try {
@@ -101,7 +101,7 @@ export const createTest = async (req, res) => {
                         })),
                         skipDuplicates: true,
                     });
-                    console.log(`✅ Безкоштовний тест "${title_ua}" додано ${users.length} користувачам`);
+                    console.log(` Безкоштовний тест "${title_ua}" додано ${users.length} користувачам`);
                 }
             } catch (err) {
                 console.error("⚠️ Не вдалося призначити безкоштовний тест всім:", err.message);
@@ -111,19 +111,19 @@ export const createTest = async (req, res) => {
         res.json({
             success: true,
             message: isFree
-                ? "✅ Тест створено та відкрито для всіх користувачів"
-                : "✅ Тест створено з авто-перекладом",
+                ? " Тест створено та відкрито для всіх користувачів"
+                : " Тест створено з авто-перекладом",
             test,
         });
     } catch (err) {
-        console.error("❌ createTest error:", err);
+        console.error(" createTest error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
 
 
-// 📘 Отримати тест з питаннями та відповідями
+
 export const getTestById = async (req, res) => {
     try {
         const id = Number(req.params.id);
@@ -185,14 +185,14 @@ export const getTestById = async (req, res) => {
 
         res.json({ success: true, test: formatted });
     } catch (err) {
-        console.error("❌ getTestById error:", err);
+        console.error(" getTestById error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
 
 
-// 📜 Генерація або завантаження існуючого сертифіката
+
 export const generateCertificate = async (req, res) => {
     try {
         const token = req.headers.authorization?.split(" ")[1];
@@ -211,13 +211,13 @@ export const generateCertificate = async (req, res) => {
 
         const percent = Math.round((score / total) * 100);
 
-        // 🔍 Перевірка: чи вже є сертифікат цього користувача за цей тест
+        
         let existingCert = await prisma.certificate.findFirst({
             where: { userId: decoded.id, testId: test.id },
         });
 
         if (existingCert) {
-            // 🧾 Якщо PDF уже згенерований — просто віддаємо файл
+            
             const existingPath = path.resolve(
                 "certificates",
                 `certificate_${existingCert.certId}.pdf`
@@ -227,14 +227,14 @@ export const generateCertificate = async (req, res) => {
                 return res.download(existingPath, `certificate_${existingCert.certId}.pdf`);
             }
 
-            // Якщо запис є, але PDF втрачено → згенеруємо заново
+            
             console.log("⚠️ PDF missing, regenerating...");
             const pdfPath = await generateCertificatePDF(existingCert.certId);
             await new Promise((r) => setTimeout(r, 200));
             return res.download(pdfPath, `certificate_${existingCert.certId}.pdf`);
         }
 
-        // 🆕 Інакше створюємо новий сертифікат
+        
         const certId = `C-UA-${Math.floor(100000 + Math.random() * 900000)}`;
         const certificate = await prisma.certificate.create({
             data: {
@@ -254,10 +254,10 @@ export const generateCertificate = async (req, res) => {
         const pdfPath = await generateCertificatePDF(certId);
         await new Promise((r) => setTimeout(r, 200));
 
-        console.log("✅ New certificate created:", certId);
+        console.log(" New certificate created:", certId);
         res.download(pdfPath, `certificate_${certId}.pdf`);
     } catch (err) {
-        console.error("❌ generateCertificate error:", err);
+        console.error(" generateCertificate error:", err);
         res
             .status(500)
             .json({ success: false, message: "Certificate generation failed" });
@@ -266,7 +266,7 @@ export const generateCertificate = async (req, res) => {
 
 
 
-// 💵 Курс USD→UAH
+
 async function getUsdToUahRate() {
     try {
         const r = await axios.get(
@@ -278,35 +278,35 @@ async function getUsdToUahRate() {
     }
 }
 
-// 🗑️ Видалити тест
+
 export const deleteTest = async (req, res) => {
     try {
         const id = Number(req.params.id);
 
         await prisma.$transaction(async (tx) => {
-            // 1️⃣ Видаляємо доступи користувачів (user_tests)
+            
             await tx.userTest.deleteMany({ where: { testId: id } });
 
-            // 2️⃣ Видаляємо історію проходжень (user_test_history)
+            
             await tx.userTestHistory.deleteMany({ where: { testId: id } });
 
-            // 3️⃣ Видаляємо сертифікати
+            
             await tx.certificate.deleteMany({ where: { testId: id } });
 
-            // 4️⃣ Видаляємо платежі, якщо є
+            
             await tx.payment.deleteMany({ where: { testId: id } });
 
-            // 5️⃣ Видаляємо відповіді та питання
+            
             await tx.answer.deleteMany({ where: { question: { testId: id } } });
             await tx.question.deleteMany({ where: { testId: id } });
 
-            // 6️⃣ Видаляємо сам тест
+            
             await tx.test.delete({ where: { id } });
         });
 
         res.json({ success: true, message: "🗑️ Тест успішно видалено" });
     } catch (err) {
-        console.error("❌ deleteTest error:", err);
+        console.error(" deleteTest error:", err);
         res.status(500).json({
             success: false,
             message: "Помилка при видаленні тесту",
@@ -316,7 +316,7 @@ export const deleteTest = async (req, res) => {
 };
 
 
-// 🧩 Усі тести
+
 export const getAllTests = async (req, res) => {
     try {
         const lang = req.query.lang === "en" ? "en" : "ua";
@@ -335,12 +335,12 @@ export const getAllTests = async (req, res) => {
         }));
         res.json({ success: true, tests: result, lang, rate });
     } catch (err) {
-        console.error("❌ getAllTests error:", err);
+        console.error(" getAllTests error:", err);
         res.status(500).json({ success: false });
     }
 };
 
-// ✏️ Оновлення тесту
+
 export const updateTest = async (req, res) => {
     try {
         const id = Number(req.params.id);
@@ -372,9 +372,9 @@ export const updateTest = async (req, res) => {
             },
         });
 
-        res.json({ success: true, message: "✅ Тест оновлено", test: updated });
+        res.json({ success: true, message: " Тест оновлено", test: updated });
     } catch (err) {
-        console.error("❌ updateTest error:", err);
+        console.error(" updateTest error:", err);
         res.status(500).json({ success: false });
     }
 };
@@ -389,28 +389,28 @@ export const verifyCertificate = async (req, res) => {
         if (!cert)
             return res.status(404).json({
                 success: false,
-                message: "❌ Сертифікат не знайдено / Certificate not found",
+                message: " Сертифікат не знайдено / Certificate not found",
             });
 
-        // 🕓 Перевірка чи сертифікат прострочений
+        
         const expired = new Date() > cert.expires;
 
-        // 🌍 Автоматичне визначення мови (пріоритет: query → заголовок → ua)
+        
         const lang =
             req.query.lang === "en" ||
             req.headers["accept-language"]?.toLowerCase().startsWith("en")
                 ? "en"
                 : "ua";
 
-        // 💬 Переклади статусу
+        
         const statusUa = expired
-            ? "Сертифікат прострочений ❌"
-            : "Дійсний сертифікат ✅";
+            ? "Сертифікат прострочений "
+            : "Дійсний сертифікат ";
         const statusEn = expired
-            ? "Certificate expired ❌"
-            : "Certificate is valid ✅";
+            ? "Certificate expired "
+            : "Certificate is valid ";
 
-        // 📤 Відповідь
+        
         res.json({
             success: true,
             valid: !expired,
@@ -429,14 +429,14 @@ export const verifyCertificate = async (req, res) => {
             status: lang === "en" ? statusEn : statusUa,
         });
     } catch (err) {
-        console.error("❌ verifyCertificate error:", err);
+        console.error(" verifyCertificate error:", err);
         res.status(500).json({ success: false });
     }
 };
 
 
 
-// 📜 Усі сертифікати користувача
+
 export const getUserCertificates = async (req, res) => {
     try {
         const token = req.headers.authorization?.split(" ")[1];
@@ -470,12 +470,12 @@ export const getUserCertificates = async (req, res) => {
 
         res.json({ success: true, certificates: result });
     } catch (err) {
-        console.error("❌ getUserCertificates error:", err);
+        console.error(" getUserCertificates error:", err);
         res.status(500).json({ success: false });
     }
 };
 
-// 🧩 Збереження результату тесту
+
 export const saveTestResult = async (req, res) => {
     try {
         console.log("📥 Test result received:", { body: req.body, user: req.user });
@@ -504,12 +504,12 @@ export const saveTestResult = async (req, res) => {
 
         res.json({ success: true, newAchievements });
     } catch (err) {
-        console.error("❌ saveTestResult error:", err);
+        console.error(" saveTestResult error:", err);
         res.status(500).json({ success: false });
     }
 };
 
-// 🧩 Пройдені тести користувача
+
 export const getUserPassedTests = async (req, res) => {
     try {
         const userId = req.user.id;
@@ -528,7 +528,7 @@ export const getUserPassedTests = async (req, res) => {
 
         res.json({ success: true, tests });
     } catch (err) {
-        console.error("❌ getUserPassedTests error:", err);
+        console.error(" getUserPassedTests error:", err);
         res.status(500).json({ success: false });
     }
 };
@@ -539,7 +539,7 @@ export const getUserTestResult = async (req, res) => {
 
         const attempt = await prisma.userTestHistory.findFirst({
             where: { userId, testId },
-            orderBy: { createdAt: "desc" }, // ✅ правильне поле
+            orderBy: { createdAt: "desc" }, 
             include: {
                 test: {
                     select: {
@@ -565,13 +565,13 @@ export const getUserTestResult = async (req, res) => {
                 score: attempt.score,
                 total: attempt.total,
                 passed: attempt.passed,
-                created_at: attempt.createdAt, // ✅ лишаємо camelCase з Prisma
+                created_at: attempt.createdAt, 
                 title_ua: attempt.test.titleUa,
                 title_en: attempt.test.titleEn,
             },
         });
     } catch (err) {
-        console.error("❌ getUserTestResult error:", err);
+        console.error(" getUserTestResult error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };

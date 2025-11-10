@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 
-// Mock axios translate to avoid network
+
 await jest.unstable_mockModule('axios', () => ({
   __esModule: true,
   default: {
@@ -30,7 +30,7 @@ await jest.unstable_mockModule('../../config/prisma.js', () => ({
         if (select.priceCents) root.priceCents = t.priceCents;
         if (select.currency) root.currency = t.currency;
         if (select.questions) {
-          // Build questions with answers
+          
           const qs = questions.filter(q => q.testId === t.id).sort((a,b)=>a.id-b.id).map(q => {
             const qObj = {};
             const qSel = select.questions.select || {};
@@ -72,7 +72,7 @@ const { createTest, getTestById } = await import('../../controllers/testControll
 function mockRes() { return { statusCode: 200, body: null, status(c){ this.statusCode=c; return this; }, json(p){ this.body=p; return this; } }; }
 
 describe('testController', () => {
-  beforeEach(() => { /* state persists intentionally */ });
+  beforeEach(() => {  });
 
   test('createTest stores test and questions', async () => {
     const req = { body: { title_ua: 'Тест', questions: [ { question_ua: 'Q1', answers: [ { answer_ua: 'A1', is_correct: true } ] } ] } };
@@ -87,7 +87,7 @@ describe('testController', () => {
     const req1 = { body: { title_ua: 'Тест2', questions: [ { question_ua: 'Q1', answers: [ { answer_ua: 'A1', is_correct: true }, { answer_ua: 'A2', is_correct: false } ] } ] } };
     const res1 = mockRes();
     await createTest(req1, res1);
-    const newId = tests.length; // last inserted id
+    const newId = tests.length; 
     const req = { params: { id: String(newId) } };
     const res = mockRes();
     await getTestById(req, res);

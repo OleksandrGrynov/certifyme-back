@@ -1,6 +1,6 @@
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
-import prisma from "./prisma.js"; // 👈 твій Prisma-клієнт
+import prisma from "./prisma.js"; 
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -22,19 +22,19 @@ passport.use(
                     return done(new Error("No email from Google profile"), null);
                 }
 
-                // 🔸 Перевіряємо чи користувач вже існує
+                
                 let user = await prisma.user.findUnique({
                     where: { email },
                 });
 
                 if (!user) {
-                    // 🔹 Якщо ні — створюємо
+                    
                     user = await prisma.user.create({
                         data: {
                             first_name,
                             last_name,
                             email,
-                            password: "", // порожній пароль, бо OAuth
+                            password: "", 
                             role: "user",
                             created_at: new Date(),
                         },
@@ -51,7 +51,7 @@ passport.use(
 
                 return done(null, user);
             } catch (err) {
-                console.error("❌ GoogleStrategy error:", err);
+                console.error(" GoogleStrategy error:", err);
                 done(err, null);
             }
         }

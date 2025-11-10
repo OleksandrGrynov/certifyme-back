@@ -20,17 +20,13 @@ import prisma from "../config/prisma.js";
 
 const router = express.Router();
 router.get("/result/:testId", authMiddleware, getUserTestResult);
-/* ────────────────────────────────────────────────────────────────
-   📚 Публічні роути
-   ──────────────────────────────────────────────────────────────── */
+
 router.get("/", getAllTests);
 router.get("/certificates/:cert_id", verifyCertificate);
 
-/* ────────────────────────────────────────────────────────────────
-   📜 Сертифікати користувача
-   ──────────────────────────────────────────────────────────────── */
 
-// 🔍 Перевірка чи вже існує PDF сертифікат користувача для тесту
+
+
 router.get("/certificate/check/:testId", authMiddleware, async (req, res) => {
     try {
         const testId = Number(req.params.testId);
@@ -56,32 +52,26 @@ router.get("/certificate/check/:testId", authMiddleware, async (req, res) => {
 
         return res.status(404).json({ success: false, message: "PDF file not found" });
     } catch (err) {
-        console.error("❌ Error checking certificate:", err);
+        console.error(" Error checking certificate:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-// 🧾 Генерація нового сертифіката
+
 router.post("/certificate", authMiddleware, generateCertificate);
 
-/* ────────────────────────────────────────────────────────────────
-   👤 Роути користувача
-   ──────────────────────────────────────────────────────────────── */
+
 router.get("/user/certificates", authMiddleware, getUserCertificates);
 router.get("/user/passed", authMiddleware, getUserPassedTests);
 router.post("/record", authMiddleware, saveTestResult);
 router.post("/explain-one", explainOneQuestion);
 
-/* ────────────────────────────────────────────────────────────────
-   🛠️ Адмінські CRUD-операції
-   ──────────────────────────────────────────────────────────────── */
+
 router.post("/", authMiddleware, isAdmin, createTest);
 router.put("/:id", authMiddleware, isAdmin, updateTest);
 router.delete("/:id", authMiddleware, isAdmin, deleteTest);
 
-/* ────────────────────────────────────────────────────────────────
-   🧩 PUT /:id/questions — Повне оновлення питань тесту
-   ──────────────────────────────────────────────────────────────── */
+
 router.put("/:id/questions", authMiddleware, isAdmin, async (req, res) => {
     const { id } = req.params;
     const { questions } = req.body;
@@ -121,9 +111,9 @@ router.put("/:id/questions", authMiddleware, isAdmin, async (req, res) => {
             }
         });
 
-        res.json({ success: true, message: "✅ Питання оновлено успішно" });
+        res.json({ success: true, message: " Питання оновлено успішно" });
     } catch (err) {
-        console.error("❌ Помилка оновлення питань:", err);
+        console.error(" Помилка оновлення питань:", err);
         res.status(500).json({
             success: false,
             message: "Помилка при оновленні питань",
@@ -139,7 +129,7 @@ router.get("/public/:id", async (req, res) => {
             where: { id: testId },
             include: {
                 questions: {
-                    take: 3, // показуємо тільки кілька питань
+                    take: 3, 
                     include: {
                         answers: {
                             take: 3,
@@ -153,7 +143,7 @@ router.get("/public/:id", async (req, res) => {
             return res.status(404).json({ success: false, message: "Test not found" });
         }
 
-        // 🧠 Форматуємо поля під фронт
+        
         const formattedQuestions = test.questions.map((q) => ({
             id: q.id,
             question_ua: q.questionUa,
@@ -179,16 +169,14 @@ router.get("/public/:id", async (req, res) => {
 
         res.json({ success: true, test: formattedTest });
     } catch (err) {
-        console.error("❌ getPublicTest error:", err);
+        console.error(" getPublicTest error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
 
 router.get("/admin/:id", authMiddleware, isAdmin, getTestById);
-/* ────────────────────────────────────────────────────────────────
-   📘 Отримати тест за ID — завжди останній!
-   ──────────────────────────────────────────────────────────────── */
+
 router.get("/:id", authMiddleware, async (req, res) => {
     try {
         const testId = Number(req.params.id);
@@ -209,7 +197,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
             return res.status(404).json({ success: false, message: "Test not found" });
         }
 
-        // 🟢 Якщо тест безкоштовний — віддаємо одразу
+        
         if (!test.priceCents || test.priceCents === 0) {
             const formattedQuestions = test.questions.map((q) => ({
                 id: q.id,
@@ -236,12 +224,12 @@ router.get("/:id", authMiddleware, async (req, res) => {
             });
         }
 
-        // 🟩 Перевіряємо, чи користувач має доступ вручну (user_tests)
+        
         const manualAccess = await prisma.userTest.findFirst({
             where: { userId, testId, isUnlocked: true },
         });
 
-        // 🔐 Перевіряємо оплату (якщо немає manualAccess)
+        
         const payment = await prisma.payment.findFirst({
             where: {
                 userId,
@@ -250,7 +238,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
             },
         });
 
-        // 🚫 Якщо ні оплати, ні ручного доступу — відмовляємо
+        
         if (!payment && !manualAccess) {
             return res.status(403).json({
                 success: false,
@@ -258,7 +246,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
             });
         }
 
-        // ✅ Все добре — форматований варіант для платного або відкритого тесту
+        
         const formattedQuestions = test.questions.map((q) => ({
             id: q.id,
             question_ua: q.questionUa,
@@ -283,7 +271,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
             },
         });
     } catch (err) {
-        console.error("❌ getTestById error:", err);
+        console.error(" getTestById error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });

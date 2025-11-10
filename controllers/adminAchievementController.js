@@ -1,11 +1,9 @@
 import { PrismaClient } from "@prisma/client";
-import { translateText } from "../utils/translate.js"; // утиліта перекладу
+import { translateText } from "../utils/translate.js"; 
 
 const prisma = new PrismaClient();
 
-/* ──────────────────────────────────────────────
- * 🟢 Створити досягнення (без GPT)
- * ────────────────────────────────────────────── */
+
 export async function createAchievement(req, res) {
     try {
         const {
@@ -14,8 +12,8 @@ export async function createAchievement(req, res) {
             image_url,
             category,
             icon,
-            condition_type, // тип умови
-            condition_value, // значення умови
+            condition_type, 
+            condition_value, 
         } = req.body;
 
         if (!title_ua) {
@@ -25,20 +23,20 @@ export async function createAchievement(req, res) {
             });
         }
 
-        // 🧩 Генерація унікального коду
+        
         const code =
             req.body.code ||
             title_ua.toLowerCase().replace(/\s+/g, "_").replace(/[^\w_]/g, "") +
             "_" +
             Date.now();
 
-        // 🌐 Автоматичний переклад
+        
         const title_en = await translateText(title_ua, "en");
         const description_en = description_ua
             ? await translateText(description_ua, "en")
             : "";
 
-        // 💾 Створення запису
+        
         const achievement = await prisma.achievement.create({
             data: {
                 code,
@@ -56,16 +54,14 @@ export async function createAchievement(req, res) {
 
         res.json({ success: true, achievement });
     } catch (err) {
-        console.error("❌ createAchievement error:", err);
+        console.error(" createAchievement error:", err);
         res
             .status(500)
             .json({ success: false, message: "Server error: " + err.message });
     }
 }
 
-/* ──────────────────────────────────────────────
- * 🟡 Оновити досягнення
- * ────────────────────────────────────────────── */
+
 export async function updateAchievement(req, res) {
     try {
         const { id } = req.params;
@@ -79,7 +75,7 @@ export async function updateAchievement(req, res) {
             condition_value,
         } = req.body;
 
-        // 🌐 Автоматичний переклад
+        
         const title_en = title_ua ? await translateText(title_ua, "en") : undefined;
         const description_en = description_ua
             ? await translateText(description_ua, "en")
@@ -102,32 +98,28 @@ export async function updateAchievement(req, res) {
 
         res.json({ success: true, achievement });
     } catch (err) {
-        console.error("❌ updateAchievement error:", err);
+        console.error(" updateAchievement error:", err);
         res
             .status(500)
             .json({ success: false, message: "Server error: " + err.message });
     }
 }
 
-/* ──────────────────────────────────────────────
- * 🔴 Видалити досягнення
- * ────────────────────────────────────────────── */
+
 export async function deleteAchievement(req, res) {
     try {
         const { id } = req.params;
         await prisma.achievement.delete({ where: { id: Number(id) } });
         res.json({ success: true });
     } catch (err) {
-        console.error("❌ deleteAchievement error:", err);
+        console.error(" deleteAchievement error:", err);
         res
             .status(500)
             .json({ success: false, message: "Server error: " + err.message });
     }
 }
 
-/* ──────────────────────────────────────────────
- * 🔹 Отримати всі досягнення (для адмін-панелі)
- * ────────────────────────────────────────────── */
+
 export async function getAllAchievements(req, res) {
     try {
         const achievements = await prisma.achievement.findMany({
@@ -135,7 +127,7 @@ export async function getAllAchievements(req, res) {
         });
         res.json({ success: true, achievements });
     } catch (err) {
-        console.error("❌ getAllAchievements error:", err);
+        console.error(" getAllAchievements error:", err);
         res
             .status(500)
             .json({ success: false, message: "Server error: " + err.message });

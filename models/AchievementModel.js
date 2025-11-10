@@ -1,8 +1,6 @@
 import prisma from "../config/prisma.js";
 
-/* ======================================================
-   🔹 Отримати всі досягнення користувача з урахуванням мови
-   ====================================================== */
+
 export async function getUserAchievements(userId, lang = "ua") {
     const rows = await prisma.userAchievement.findMany({
         where: { userId },
@@ -32,9 +30,7 @@ export async function getUserAchievements(userId, lang = "ua") {
     }));
 }
 
-/* ======================================================
-   🔹 Оновити прогрес (еквівалент SQL UPDATE)
-   ====================================================== */
+
 export async function updateUserAchievement(userId, achievementId, newProgress) {
     const progress = Math.min(newProgress, 100);
     const achieved = progress >= 100;
@@ -49,9 +45,7 @@ export async function updateUserAchievement(userId, achievementId, newProgress) 
     });
 }
 
-/* ======================================================
-   🔹 Ініціалізувати досягнення для користувача
-   ====================================================== */
+
 export async function initUserAchievements(userId) {
     const achievements = await prisma.achievement.findMany({ select: { id: true } });
 
@@ -66,9 +60,7 @@ export async function initUserAchievements(userId) {
     );
 }
 
-/* ======================================================
-   🔹 Гарантовано створити досягнення, якщо їх нема
-   ====================================================== */
+
 export async function ensureUserAchievements(userId) {
     const allAchievements = await prisma.achievement.findMany({ select: { id: true } });
     const userAchievements = await prisma.userAchievement.findMany({
@@ -92,9 +84,7 @@ export async function ensureUserAchievements(userId) {
 }
 
 
-/* ======================================================
-   🔹 Розблокувати або оновити досягнення за code
-   ====================================================== */
+
 export async function setAchievementByCode(userId, code, progress) {
     const achievement = await prisma.achievement.findUnique({ where: { code } });
     if (!achievement) throw new Error(`Unknown achievement code: ${code}`);
@@ -102,7 +92,7 @@ export async function setAchievementByCode(userId, code, progress) {
     const newProgress = Math.min(progress, 100);
     const achieved = newProgress >= 100;
 
-    // Еквівалент INSERT ... ON CONFLICT DO UPDATE
+    
     await prisma.userAchievement.upsert({
         where: {
             userId_achievementId: { userId, achievementId: achievement.id },
@@ -122,9 +112,7 @@ export async function setAchievementByCode(userId, code, progress) {
     });
 }
 
-/* ======================================================
-   🔹 Оновити кілька досягнень разом
-   ====================================================== */
+
 export async function updateAchievementsBatch(userId, updates = []) {
     for (const u of updates) {
         await setAchievementByCode(userId, u.code, u.progress ?? 0);
@@ -132,9 +120,7 @@ export async function updateAchievementsBatch(userId, updates = []) {
     return true;
 }
 
-/* ======================================================
-   🔹 Розблокувати досягнення по коду (100% одразу)
-   ====================================================== */
+
 export async function unlockUserAchievementByCode(userId, code) {
     const achievement = await prisma.achievement.findUnique({ where: { code } });
     if (!achievement) return null;
@@ -158,9 +144,7 @@ export async function unlockUserAchievementByCode(userId, code) {
     return achievement;
 }
 
-/* ======================================================
-   🔹 Забезпечити наявність базового каталогу досягнень
-   ====================================================== */
+
 async function ensureAchievementCatalog() {
     const existing = await prisma.achievement.count();
     if (existing > 0) return;

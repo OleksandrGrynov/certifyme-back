@@ -1,4 +1,4 @@
-// scripts/smoke-analytics.js
+
 import axios from 'axios';
 const BASE = `${process.env.BACKEND_URL}/api`;
 const email = process.env.SMOKE_EMAIL || 'admin@example.com';

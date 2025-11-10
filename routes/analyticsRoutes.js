@@ -4,14 +4,12 @@ import authMiddleware from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-/* ======================================================
-   📊 Загальний огляд користувача
-   ====================================================== */
+
 router.get("/user/overview", authMiddleware, async (req, res) => {
     try {
         const userId = req.user.id;
 
-        // 🧾 Отримуємо всі сертифікати користувача
+        
         const certs = await prisma.certificate.findMany({
             where: { userId },
             select: { percent: true, createdAt: true, testId: true },
@@ -21,7 +19,7 @@ router.get("/user/overview", authMiddleware, async (req, res) => {
         const totalTests = totalCerts;
         const uniqueTests = new Set(certs.map((c) => c.testId)).size;
 
-        // 🎯 Середній бал
+        
         const avgScore =
             totalCerts > 0
                 ? Math.round(
@@ -29,11 +27,11 @@ router.get("/user/overview", authMiddleware, async (req, res) => {
                 )
                 : 0;
 
-        // 🧠 Прохідність (успішно зданих)
+        
         const passed = certs.filter((c) => c.percent >= 60).length;
         const passRate = totalCerts > 0 ? (passed / totalCerts) * 100 : 0;
 
-        // 🔥 Поточний стрік (днів поспіль з активністю)
+        
         const daysActive = [
             ...new Set(certs.map((c) => c.createdAt.toISOString().slice(0, 10))),
         ]
@@ -53,13 +51,13 @@ router.get("/user/overview", authMiddleware, async (req, res) => {
             }
         }
 
-        // 🧩 Розрахунок рівня користувача
+        
         const exp =
             totalTests * 10 + totalCerts * 20 + avgScore * 0.5 + streak * 5;
         const level = Math.floor(exp / 100);
         const levelProgress = Math.round(exp % 100);
 
-        // 📤 Відповідь
+        
         res.json({
             success: true,
             data: {
@@ -68,24 +66,22 @@ router.get("/user/overview", authMiddleware, async (req, res) => {
                 my_tests_taken: totalTests,
                 my_avg_score: avgScore,
                 my_certificates: totalCerts,
-                my_pass_rate: Number(passRate.toFixed(1)), // %
+                my_pass_rate: Number(passRate.toFixed(1)), 
                 current_streak_days: streak,
-                level, // 🧩 рівень
-                level_progress: levelProgress, // 🧩 %
+                level, 
+                level_progress: levelProgress, 
                 last_updated: new Date(),
             },
         });
     } catch (err) {
-        console.error("❌ user/overview error:", err);
+        console.error(" user/overview error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
 
 
-/* ======================================================
-   📆 Активність користувача (щоденна)
-   ====================================================== */
+
 router.get("/user/daily", authMiddleware, async (req, res) => {
     try {
         const userId = req.user.id;
@@ -109,14 +105,12 @@ router.get("/user/daily", authMiddleware, async (req, res) => {
 
         res.json({ success: true, data: { activity: data, tests: data } });
     } catch (err) {
-        console.error("❌ user/daily error:", err);
+        console.error(" user/daily error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-/* ======================================================
-   🧠 Топ-курси користувача
-   ====================================================== */
+
 router.get("/user/top-courses", authMiddleware, async (req, res) => {
     try {
         const userId = req.user.id;
@@ -148,14 +142,12 @@ router.get("/user/top-courses", authMiddleware, async (req, res) => {
 
         res.json({ success: true, data });
     } catch (err) {
-        console.error("❌ user/top-courses error:", err);
+        console.error(" user/top-courses error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-/* ======================================================
-   🕒 Останні події користувача
-   ====================================================== */
+
 router.get("/user/recent", authMiddleware, async (req, res) => {
     try {
         const userId = req.user.id;
@@ -176,16 +168,14 @@ router.get("/user/recent", authMiddleware, async (req, res) => {
 
         res.json({ success: true, data });
     } catch (err) {
-        console.error("❌ user/recent error:", err);
+        console.error(" user/recent error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
-/* ======================================================
-   🌍 Публічна статистика для головної сторінки
-   ====================================================== */
+
 router.get("/public/overview", async (req, res) => {
     try {
-        // Отримуємо базову статистику
+        
         const [users, tests, certificates] = await Promise.all([
             prisma.user.count(),
             prisma.test.count(),
@@ -198,11 +188,11 @@ router.get("/public/overview", async (req, res) => {
                 learners: users,
                 courses: tests,
                 certificates,
-                years: 2, // або розрахуй динамічно, наприклад new Date().getFullYear() - 2023
+                years: 2, 
             },
         });
     } catch (err) {
-        console.error("❌ public/overview error:", err);
+        console.error(" public/overview error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
@@ -223,7 +213,7 @@ router.get("/public/stats", async (req, res) => {
             },
         });
     } catch (err) {
-        console.error("❌ public/stats error:", err);
+        console.error(" public/stats error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });

@@ -10,13 +10,13 @@ async function sendTestEmail() {
         const data = await resend.emails.send({
             from: process.env.EMAIL_FROM,
             to: "alex170707228@gmail.com",
-            subject: "✅ Перевірка Resend",
+            subject: " Перевірка Resend",
             html: "<p>Привіт! Це тестовий лист від CertifyMe 💚</p>",
         });
 
-        console.log("✅ Лист успішно відправлено:", data);
+        console.log(" Лист успішно відправлено:", data);
     } catch (error) {
-        console.error("❌ Помилка відправки:", error);
+        console.error(" Помилка відправки:", error);
     }
 }
 

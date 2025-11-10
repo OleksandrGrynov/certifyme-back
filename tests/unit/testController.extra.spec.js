@@ -3,10 +3,10 @@ import fs from 'fs';
 import path from 'path';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 
-// In-memory stores
+
 const tests = []; const questions=[]; const answers=[]; const certificates=[]; const histories=[]; const payments=[]; const userTests=[];
 
-// Mocks
+
 await jest.unstable_mockModule('axios', () => ({ __esModule:true, default:{ get: jest.fn(async () => ({ data:[{ rate:40 }] })) } }));
 await jest.unstable_mockModule('jsonwebtoken', () => ({ __esModule:true, default:{ verify: (token) => ({ id:1, role:'user', first_name:'User', last_name:'One' }) }, verify:(t)=>({ id:1, role:'user' }) }));
 await jest.unstable_mockModule('../../utils/certificateGenerator.js', () => ({ __esModule:true, generateCertificatePDF: jest.fn(async (id)=> path.join(process.cwd(),'certificates',`certificate_${id}.pdf`)) }));
@@ -113,7 +113,7 @@ describe('testController generateCertificate', () => {
     const filePath= path.join(process.cwd(),'certificates',`certificate_${existingId}.pdf`);
     fs.mkdirSync(path.join(process.cwd(),'certificates'), { recursive:true });
     fs.writeFileSync(filePath,'PDF');
-    // ensure test exists
+    
     if (!tests.find(t=>t.id===2)) tests.push({ id:2, titleUa:'T2', titleEn:'T2' });
     certificates.push({ certId: existingId, userId:1, testId:2, percent:90, issued:new Date(), expires:new Date(Date.now()+86400000) });
     const req={ headers: authHeader(), body:{ testId:2, score:9, total:10 } };
@@ -176,7 +176,7 @@ describe('testController updateTest', () => {
     const req={ params:{ id:'2' }, body:{ title_ua:'Новий2', price_amount:400, currency:'uah' } };
     const res=mockRes();
     await updateTest(req,res);
-    expect(res.body.test.priceCents).toBe(1000); // 400/40=10 usd => 1000 cents
+    expect(res.body.test.priceCents).toBe(1000); 
     expect(res.body.test.currency).toBe('usd');
   });
   describe('negative cases', () => {

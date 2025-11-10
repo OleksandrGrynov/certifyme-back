@@ -4,9 +4,7 @@ import authMiddleware, { isAdmin } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-/* ======================================================
-   👥 Отримати всіх користувачів
-   ====================================================== */
+
 router.get("/users", authMiddleware, isAdmin, async (req, res) => {
     try {
         const users = await prisma.user.findMany({
@@ -34,14 +32,12 @@ router.get("/users", authMiddleware, isAdmin, async (req, res) => {
 
         res.json({ success: true, users: rows });
     } catch (err) {
-        console.error("❌ getAllUsers error:", err);
+        console.error(" getAllUsers error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-/* ======================================================
-   🗑️ Видалення користувача з архівацією платежів
-   ====================================================== */
+
 router.delete("/users/:id", authMiddleware, isAdmin, async (req, res) => {
     const id = Number(req.params.id);
     try {
@@ -68,7 +64,7 @@ router.delete("/users/:id", authMiddleware, isAdmin, async (req, res) => {
             });
 
         await prisma.$transaction(async (tx) => {
-            // 💾 архівація платежів
+            
             const payments = await tx.payment.findMany({
                 where: { userId: id },
                 select: { amountCents: true, createdAt: true },
@@ -99,14 +95,12 @@ router.delete("/users/:id", authMiddleware, isAdmin, async (req, res) => {
                 "Користувача та пов'язані дані видалено, оплати архівовано для аналітики.",
         });
     } catch (err) {
-        console.error("❌ deleteUser error:", err);
+        console.error(" deleteUser error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-/* ======================================================
-   ✏️ Змінити роль користувача
-   ====================================================== */
+
 router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
     try {
         const id = Number(req.params.id);
@@ -150,14 +144,12 @@ router.put("/users/:id", authMiddleware, isAdmin, async (req, res) => {
 
         res.json({ success: true, user: updated });
     } catch (err) {
-        console.error("❌ updateUserRole error:", err);
+        console.error(" updateUserRole error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-/* ======================================================
-   🎓 Отримати всі сертифікати
-   ====================================================== */
+
 router.get("/certificates", authMiddleware, isAdmin, async (req, res) => {
     try {
         const certs = await prisma.certificate.findMany({
@@ -190,28 +182,24 @@ router.get("/certificates", authMiddleware, isAdmin, async (req, res) => {
 
         res.json({ success: true, certificates: rows });
     } catch (err) {
-        console.error("❌ getAllCertificates error:", err);
+        console.error(" getAllCertificates error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-/* ======================================================
-   🧾 Видалення сертифікату
-   ====================================================== */
+
 router.delete("/certificates/:id", authMiddleware, isAdmin, async (req, res) => {
     try {
         const id = Number(req.params.id);
         await prisma.certificate.delete({ where: { id } });
         res.json({ success: true });
     } catch (err) {
-        console.error("❌ deleteCertificate error:", err);
+        console.error(" deleteCertificate error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-/* ======================================================
-   📊 Глобальна статистика (users/tests/certs/payments)
-   ====================================================== */
+
 router.get("/stats", authMiddleware, isAdmin, async (req, res) => {
     try {
         const [
@@ -281,7 +269,7 @@ router.get("/stats", authMiddleware, isAdmin, async (req, res) => {
             },
         });
     } catch (err) {
-        console.error("❌ getStats error:", err);
+        console.error(" getStats error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });

@@ -1,6 +1,6 @@
-import prisma from "../config/prisma.js"; // або "../prismaClient.js", залежно від твого шляху
+import prisma from "../config/prisma.js"; 
 
-// 📩 Створення нової заявки
+
 export const createContact = async (req, res) => {
     console.log("📩 Отримано форму з фронта:", req.body);
     try {
@@ -14,13 +14,13 @@ export const createContact = async (req, res) => {
                 telegram,
                 message,
                 agree: agree || false,
-                status: "new", // за замовчуванням "нова"
+                status: "new", 
             },
         });
 
         res.status(201).json({ success: true, contact });
     } catch (err) {
-        console.error("❌ Помилка при створенні контакту:", err);
+        console.error(" Помилка при створенні контакту:", err);
         res.status(500).json({
             success: false,
             message: "Помилка при створенні контакту",
@@ -29,7 +29,7 @@ export const createContact = async (req, res) => {
     }
 };
 
-// 📋 Отримати всі заявки (з опціональним фільтром)
+
 export const getContacts = async (req, res) => {
     try {
         const { status } = req.query;
@@ -47,7 +47,7 @@ export const getContacts = async (req, res) => {
                 message: true,
                 status: true,
                 agree: true,
-                created_at: true, // 👈 обов’язково
+                created_at: true, 
             },
         });
 
@@ -58,7 +58,7 @@ export const getContacts = async (req, res) => {
 
         res.json(formatted);
     } catch (err) {
-        console.error("❌ Помилка при отриманні контактів:", err);
+        console.error(" Помилка при отриманні контактів:", err);
         res.status(500).json({
             message: "Не вдалося отримати контакти",
             error: err.message,
@@ -68,7 +68,7 @@ export const getContacts = async (req, res) => {
 
 
 
-// 🗑️ Видалення заявки
+
 export const deleteContact = async (req, res) => {
     try {
         const id = Number(req.params.id);
@@ -76,7 +76,7 @@ export const deleteContact = async (req, res) => {
 
         res.json({ success: true, message: "Заявку видалено" });
     } catch (err) {
-        console.error("❌ Помилка видалення заявки:", err);
+        console.error(" Помилка видалення заявки:", err);
         res.status(500).json({
             success: false,
             message: "Помилка при видаленні заявки",
@@ -85,7 +85,7 @@ export const deleteContact = async (req, res) => {
     }
 };
 
-// 🔄 Оновлення статусу заявки
+
 export const updateContactStatus = async (req, res) => {
     try {
         const id = Number(req.params.id);
@@ -98,7 +98,7 @@ export const updateContactStatus = async (req, res) => {
 
         res.json({ success: true, updated });
     } catch (err) {
-        console.error("❌ Помилка оновлення статусу:", err);
+        console.error(" Помилка оновлення статусу:", err);
         res.status(500).json({
             success: false,
             message: "Помилка при оновленні статусу заявки",

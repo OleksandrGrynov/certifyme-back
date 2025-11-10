@@ -1,9 +1,7 @@
 import prisma from "../config/prisma.js";
-import * as service from "../services/analyticsService.js"; // якщо в service уже ORM, можна потім прибрати
+import * as service from "../services/analyticsService.js"; 
 
-/* ======================================================
-   🧾 Запис аудиту через Prisma
-   ====================================================== */
+
 async function audit(req, startMs) {
   try {
     const duration = Date.now() - startMs;
@@ -24,13 +22,11 @@ async function audit(req, startMs) {
   }
 }
 
-/* ======================================================
-   📊 Отримання загальних даних
-   ====================================================== */
+
 export async function getOverview(req, res) {
   const start = Date.now();
   try {
-    const data = await service.getOverview(); // або свій prisma-код тут
+    const data = await service.getOverview(); 
     await audit(req, start);
     res.json({ success: true, data });
   } catch (err) {
@@ -39,15 +35,13 @@ export async function getOverview(req, res) {
   }
 }
 
-/* ======================================================
-   📅 Щоденна статистика
-   ====================================================== */
+
 export async function getDaily(req, res) {
   const start = Date.now();
   try {
     const days = Math.min(parseInt(req.query.days || "30", 10), 365);
 
-    // 🔹 приклад запиту через Prisma
+    
     const data = await prisma.analytics_daily.findMany({
       orderBy: { date: "desc" },
       take: days,
@@ -61,15 +55,13 @@ export async function getDaily(req, res) {
   }
 }
 
-/* ======================================================
-   🏆 Топ курсів
-   ====================================================== */
+
 export async function getTopCourses(req, res) {
   const start = Date.now();
   try {
     const limit = Math.min(parseInt(req.query.limit || "10", 10), 100);
 
-    // 🔹 приклад ORM-запиту з агрегацією
+    
     const data = await prisma.certificate.groupBy({
       by: ["course"],
       _count: { course: true },
@@ -87,9 +79,7 @@ export async function getTopCourses(req, res) {
   }
 }
 
-/* ======================================================
-   🕓 Недавня активність
-   ====================================================== */
+
 export async function getRecent(req, res) {
   const start = Date.now();
   try {
@@ -114,9 +104,7 @@ export async function getRecent(req, res) {
   }
 }
 
-/* ======================================================
-   👤 Метрики користувачів
-   ====================================================== */
+
 export async function getUserMetrics(req, res) {
   const start = Date.now();
   try {
@@ -149,9 +137,7 @@ export async function getUserMetrics(req, res) {
   }
 }
 
-/* ======================================================
-   🧪 Результати тестів
-   ====================================================== */
+
 export async function getTestResults(req, res) {
   const start = Date.now();
   try {

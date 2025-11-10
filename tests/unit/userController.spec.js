@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 
-// In-memory store for prisma mock
+
 const users = [];
 
 await jest.unstable_mockModule('../../config/prisma.js', () => ({
@@ -21,7 +21,7 @@ await jest.unstable_mockModule('../../models/AchievementModel.js', () => ({
   initUserAchievements: jest.fn(async () => ({}))
 }));
 
-// Mock Resend to prevent network
+
 await jest.unstable_mockModule('resend', () => ({
   __esModule: true,
   Resend: class { emails = { send: async () => ({}) } }
@@ -41,7 +41,7 @@ function mockRes() {
 
 describe('userController', () => {
   beforeEach(() => {
-    // no-op; keep users array across tests for flow
+    
   });
 
   test('registerUser creates user and returns success', async () => {
@@ -92,7 +92,7 @@ describe('userController', () => {
   test('loginUser wrong password returns 401', async () => {
     const regReq = { body: { first_name: 'Wrong', last_name: 'Pass', email: 'wrong@example.com', password: 'Secret123!' } }; const regRes = mockRes();
     await registerUser(regReq, regRes);
-    // OTP not verified -> first try with wrong password still returns 403 (not verified) unless we verify OTP; verify then wrong password check
+    
     const created = await prisma.user.findUnique({ where: { email: 'wrong@example.com' } });
     const otpReq = { body: { email: 'wrong@example.com', otp: created.otpCode } }; const otpRes = mockRes();
     await verifyOtp(otpReq, otpRes);

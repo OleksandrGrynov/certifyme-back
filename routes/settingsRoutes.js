@@ -4,15 +4,13 @@ import { verifyToken, isAdmin } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-/* ────────────────────────────────────────────────
-   ⚙️ 1. Основні налаштування
-   ──────────────────────────────────────────────── */
+
 router.get("/", verifyToken, isAdmin, async (req, res) => {
     try {
         const settings = await prisma.setting.findFirst();
         res.json({ success: true, settings: settings || {} });
     } catch (err) {
-        console.error("❌ getSettings error:", err);
+        console.error(" getSettings error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
@@ -32,20 +30,18 @@ router.put("/", verifyToken, isAdmin, async (req, res) => {
             },
         });
 
-        res.json({ success: true, message: "✅ Settings updated" });
+        res.json({ success: true, message: " Settings updated" });
     } catch (err) {
-        console.error("❌ updateSettings error:", err);
+        console.error(" updateSettings error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-/* ────────────────────────────────────────────────
-   💻 2. Системна інформація
-   ──────────────────────────────────────────────── */
+
 router.get("/system", verifyToken, isAdmin, async (req, res) => {
     const lang = req.query.lang || "uk";
 
-    // можеш згодом зробити динамічні дані (uptime, load)
+    
     const info = {
         apiVersion: "1.2.3",
         dbStatus: lang === "en" ? "Connected" : "Підключено",
@@ -56,14 +52,12 @@ router.get("/system", verifyToken, isAdmin, async (req, res) => {
     res.json({ success: true, info });
 });
 
-/* ────────────────────────────────────────────────
-   🤖 3. AI Insights / статистика
-   ──────────────────────────────────────────────── */
+
 router.get("/insights", verifyToken, isAdmin, async (req, res) => {
     const lang = req.query.lang || "uk";
 
     try {
-        // Отримуємо все одним запитом
+        
         const [lastTest, usersCount, avgPercent] = await Promise.all([
             prisma.test.findFirst({
                 orderBy: { id: "desc" },
@@ -90,7 +84,7 @@ router.get("/insights", verifyToken, isAdmin, async (req, res) => {
 
         res.json({ success: true, insights });
     } catch (err) {
-        console.error("❌ insights error:", err);
+        console.error(" insights error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });

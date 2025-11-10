@@ -4,9 +4,7 @@ import authMiddleware, { isAdmin } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-/* ======================================================
-   📊 Загальний огляд системи
-   ====================================================== */
+
 router.get("/analytics/overview", authMiddleware, isAdmin, async (req, res) => {
     try {
         const [
@@ -41,14 +39,12 @@ router.get("/analytics/overview", authMiddleware, isAdmin, async (req, res) => {
             },
         });
     } catch (err) {
-        console.error("❌ overview error:", err);
+        console.error(" overview error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-/* ======================================================
-   📈 Реєстрації користувачів за днями
-   ====================================================== */
+
 router.get("/analytics/daily-users", authMiddleware, isAdmin, async (req, res) => {
     try {
         const days = parseInt(req.query.days || "30", 10);
@@ -60,7 +56,7 @@ router.get("/analytics/daily-users", authMiddleware, isAdmin, async (req, res) =
             orderBy: { createdAt: "asc" },
         });
 
-        // emulate GROUP BY date
+        
         const map = new Map();
         for (const u of users) {
             const date = u.createdAt.toISOString().slice(0, 10);
@@ -70,14 +66,12 @@ router.get("/analytics/daily-users", authMiddleware, isAdmin, async (req, res) =
         const data = Array.from(map.entries()).map(([date, count]) => ({ date, count }));
         res.json({ success: true, data });
     } catch (err) {
-        console.error("❌ daily-users error:", err);
+        console.error(" daily-users error:", err);
         res.status(500).json({ success: false });
     }
 });
 
-/* ======================================================
-   💳 Суми платежів за днями
-   ====================================================== */
+
 router.get("/analytics/payments-daily", authMiddleware, isAdmin, async (req, res) => {
     try {
         const days = parseInt(req.query.days || "30", 10);
@@ -101,14 +95,12 @@ router.get("/analytics/payments-daily", authMiddleware, isAdmin, async (req, res
         const data = Array.from(map.values());
         res.json({ success: true, data });
     } catch (err) {
-        console.error("❌ payments-daily error:", err);
+        console.error(" payments-daily error:", err);
         res.status(500).json({ success: false });
     }
 });
 
-/* ======================================================
-   🧠 Найпопулярніші тести
-   ====================================================== */
+
 router.get("/analytics/top-tests", authMiddleware, isAdmin, async (req, res) => {
     try {
         const lang = req.query.lang === "en" ? "en" : "ua";
@@ -144,14 +136,12 @@ router.get("/analytics/top-tests", authMiddleware, isAdmin, async (req, res) => 
 
         res.json({ success: true, data: rows });
     } catch (err) {
-        console.error("❌ top-tests error:", err);
+        console.error(" top-tests error:", err);
         res.status(500).json({ success: false, message: err.message });
     }
 });
 
-/* ======================================================
-   👑 Користувачі з найбільшими платежами
-   ====================================================== */
+
 router.get("/analytics/top-users", authMiddleware, isAdmin, async (req, res) => {
     try {
         const grouped = await prisma.payment.groupBy({
@@ -181,7 +171,7 @@ router.get("/analytics/top-users", authMiddleware, isAdmin, async (req, res) => 
 
         res.json({ success: true, data });
     } catch (err) {
-        console.error("❌ top-users error:", err);
+        console.error(" top-users error:", err);
         res.status(500).json({ success: false, message: err.message });
     }
 });

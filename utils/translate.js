@@ -8,6 +8,6 @@ export async function translateText(text, to = "en") {
         return res.text;
     } catch (err) {
         console.error("⚠️ Translation error:", err.message);
-        return text; // fallback, якщо переклад не вдався
+        return text; 
     }
 }

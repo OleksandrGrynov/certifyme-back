@@ -6,9 +6,7 @@ import prisma from "../config/prisma.js";
 const router = express.Router();
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-/**
- * 🔹 Авторизація через Google OAuth
- */
+
 router.post("/google-token", async (req, res) => {
     try {
         const { token } = req.body;
@@ -17,7 +15,7 @@ router.post("/google-token", async (req, res) => {
                 .status(400)
                 .json({ success: false, message: "Token відсутній" });
 
-        // ✅ Верифікація токена
+        
         const ticket = await client.verifyIdToken({
             idToken: token,
             audience: process.env.GOOGLE_CLIENT_ID,
@@ -33,7 +31,7 @@ router.post("/google-token", async (req, res) => {
                 .status(400)
                 .json({ success: false, message: "Не вдалося отримати email з Google" });
 
-        // 🔍 Шукаємо користувача
+        
         let user = await prisma.user.findUnique({
             where: { email },
             select: {
@@ -48,14 +46,14 @@ router.post("/google-token", async (req, res) => {
             },
         });
 
-        // 🧩 Якщо користувача нема — створюємо
+        
         if (!user) {
             user = await prisma.user.create({
                 data: {
                     firstName,
                     lastName,
                     email,
-                    password: "", // порожній, щоб уникнути фронт-модалки
+                    password: "", 
                     role: "user",
                     isVerified: true,
                     isGoogleUser: true,
@@ -72,7 +70,7 @@ router.post("/google-token", async (req, res) => {
                 },
             });
         } else if (!user.isGoogleUser) {
-            // якщо раніше реєструвався через email, але вперше входить через Google
+            
             await prisma.user.update({
                 where: { email },
                 data: { isGoogleUser: true },
@@ -80,17 +78,17 @@ router.post("/google-token", async (req, res) => {
             user.isGoogleUser = true;
         }
 
-        // 🪙 JWT токен
+        
         const jwtToken = jwt.sign(
             { id: user.id, email: user.email, role: user.role },
             process.env.JWT_SECRET,
             { expiresIn: "7d" }
         );
 
-        // 🚀 Відповідь клієнту
+        
         res.json({ success: true, token: jwtToken, user });
     } catch (err) {
-        console.error("❌ Google auth error:", err.message);
+        console.error(" Google auth error:", err.message);
         res
             .status(403)
             .json({ success: false, message: "Помилка авторизації через Google" });

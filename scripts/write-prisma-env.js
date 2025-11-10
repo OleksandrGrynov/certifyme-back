@@ -1,5 +1,5 @@
-// scripts/write-prisma-env.js
-// Compose DATABASE_URL for Prisma from existing PG* envs and write to prisma/.env
+
+
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';

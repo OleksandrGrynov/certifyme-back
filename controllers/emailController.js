@@ -5,11 +5,11 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-// Ініціалізація Resend
+
 const resend = new Resend(process.env.RESEND_API_KEY);
 const EMAIL_FROM = process.env.EMAIL_FROM;
 
-// 📤 Надіслати код підтвердження
+
 export async function sendEmailCode(req, res) {
     try {
         const token = req.headers.authorization?.split(" ")[1];
@@ -22,16 +22,16 @@ export async function sendEmailCode(req, res) {
         const { id, email } = jwt.verify(token, process.env.JWT_SECRET);
         console.log("📧 Надсилання коду на:", email);
 
-        // Перевірки конфігурації
+        
         if (!process.env.RESEND_API_KEY) {
-            console.error("❌ RESEND_API_KEY відсутній");
+            console.error(" RESEND_API_KEY відсутній");
             return res
                 .status(500)
                 .json({ success: false, message: "Не знайдено ключ RESEND_API_KEY" });
         }
 
         if (!EMAIL_FROM) {
-            console.error("❌ EMAIL_FROM не заданий у .env");
+            console.error(" EMAIL_FROM не заданий у .env");
             return res
                 .status(500)
                 .json({ success: false, message: "EMAIL_FROM не заданий у конфігурації" });
@@ -45,10 +45,10 @@ export async function sendEmailCode(req, res) {
             });
         }
 
-        // Генеруємо 6-значний код
+        
         const code = Math.floor(100000 + Math.random() * 900000).toString();
 
-        // Зберігаємо код у БД
+        
         await prisma.emailVerification.create({
             data: {
                 userId: id,
@@ -58,7 +58,7 @@ export async function sendEmailCode(req, res) {
             },
         });
 
-        // HTML листа
+        
         const html = `
       <div style="font-family:Inter,Arial,sans-serif;padding:20px;background:#111;color:#eee;border-radius:10px;">
         <h2 style="color:#4ade80;">CertifyMe</h2>
@@ -68,7 +68,7 @@ export async function sendEmailCode(req, res) {
       </div>
     `;
 
-        // Надсилаємо лист
+        
         try {
             const sendResult = await resend.emails.send({
                 from: EMAIL_FROM,
@@ -77,15 +77,15 @@ export async function sendEmailCode(req, res) {
                 html,
             });
 
-            console.log("✅ Лист відправлено через Resend:", sendResult?.id || sendResult);
+            console.log(" Лист відправлено через Resend:", sendResult?.id || sendResult);
 
             return res.json({
                 success: true,
-                message: "Код надіслано ✅",
+                message: "Код надіслано ",
                 emailSendId: sendResult?.id,
             });
         } catch (sendErr) {
-            console.error("❌ Помилка Resend:", sendErr?.message || sendErr);
+            console.error(" Помилка Resend:", sendErr?.message || sendErr);
             return res.status(500).json({
                 success: false,
                 message: "Помилка при надсиланні листа через Resend",
@@ -93,7 +93,7 @@ export async function sendEmailCode(req, res) {
             });
         }
     } catch (err) {
-        console.error("❌ sendEmailCode error:", err);
+        console.error(" sendEmailCode error:", err);
         res.status(500).json({
             success: false,
             message: "Не вдалося надіслати код підтвердження",
@@ -101,7 +101,7 @@ export async function sendEmailCode(req, res) {
     }
 }
 
-// ✅ Перевірити код підтвердження
+
 export async function verifyEmailCode(req, res) {
     try {
         const token = req.headers.authorization?.split(" ")[1];
@@ -113,7 +113,7 @@ export async function verifyEmailCode(req, res) {
         const { id } = jwt.verify(token, process.env.JWT_SECRET);
         const { code } = req.body;
 
-        // Знайти останній код, створений за 10 хвилин, ще не використаний
+        
         const record = await prisma.emailVerification.findFirst({
             where: {
                 userId: id,
@@ -131,7 +131,7 @@ export async function verifyEmailCode(req, res) {
             });
         }
 
-        // Транзакція — позначаємо код використаним і підтверджуємо користувача
+        
         await prisma.$transaction(async (tx) => {
             await tx.emailVerification.update({
                 where: { id: record.id },
@@ -146,7 +146,7 @@ export async function verifyEmailCode(req, res) {
 
         res.json({ success: true, message: "Пошту успішно підтверджено 💚" });
     } catch (err) {
-        console.error("❌ verifyEmailCode error:", err);
+        console.error(" verifyEmailCode error:", err);
         res.status(500).json({
             success: false,
             message: "Помилка при перевірці коду підтвердження",

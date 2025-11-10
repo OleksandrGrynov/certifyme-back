@@ -1,9 +1,9 @@
-// services/analyticsService.js
+
 import prisma from "../config/prisma.js";
 
-// ───────────────────────────────────────────────────────────────
-// Optional Redis (same behavior as before; safe if not configured)
-// ───────────────────────────────────────────────────────────────
+
+
+
 let redis = null;
 let redisReady = false;
 async function ensureRedis() {
@@ -40,45 +40,45 @@ async function cacheSet(key, value, ttlSec) {
   }
 }
 
-// ───────────────────────────────────────────────────────────────
-// GLOBAL OVERVIEW (matches prior SQL logic)
-// ───────────────────────────────────────────────────────────────
+
+
+
 const OVERVIEW_KEY = "analytics:overview";
 
 export async function getOverview() {
   const cached = await cacheGet(OVERVIEW_KEY);
   if (cached) return cached;
 
-  // users total
+  
   const usersCountP = prisma.user.count();
 
-  // active last 7 days (distinct users with attempts)
+  
   const activeLast7dP = prisma.$queryRaw`
     SELECT COUNT(DISTINCT "user_id")::int AS cnt
     FROM "test_attempts"
     WHERE "created_at" >= NOW() - INTERVAL '7 days'
   `;
 
-  // registrations this week
+  
   const regsThisWeekP = prisma.$queryRaw`
     SELECT COUNT(*)::int AS cnt
     FROM "users"
     WHERE "created_at" >= date_trunc('week', NOW())
   `;
 
-  // tests taken total
+  
   const testsTakenP = prisma.testAttempt.count();
 
-  // avg score (non-null)
+  
   const avgScoreAggP = prisma.testAttempt.aggregate({
     _avg: { score: true },
     where: { score: { not: null } },
   });
 
-  // certificates issued
+  
   const certsCountP = prisma.certificate.count();
 
-  // pass rate = passed/total (score >= pass_threshold), computed in SQL to avoid client filtering
+  
   const passRateP = prisma.$queryRaw`
     SELECT CASE WHEN COUNT(*)=0 THEN 0
                 ELSE SUM(CASE WHEN "score" >= COALESCE("pass_threshold",0) THEN 1 ELSE 0 END)::float / COUNT(*)
@@ -116,13 +116,13 @@ export async function getOverview() {
     last_updated: new Date().toISOString(),
   };
 
-  await cacheSet(OVERVIEW_KEY, data, 120); // 2 minutes
+  await cacheSet(OVERVIEW_KEY, data, 120); 
   return data;
 }
 
-// ───────────────────────────────────────────────────────────────
-// GLOBAL DAILY (precomputed analytics_daily with fallback)
-// ───────────────────────────────────────────────────────────────
+
+
+
 const DAILY_KEY = (days) => `analytics:daily:${days}`;
 
 export async function getDaily(days = 30) {
@@ -130,7 +130,7 @@ export async function getDaily(days = 30) {
   const cached = await cacheGet(key);
   if (cached) return cached;
 
-  // Try precomputed AnalyticsDaily first
+  
   const since = new Date();
   since.setDate(since.getDate() - Number(days));
 
@@ -158,7 +158,7 @@ export async function getDaily(days = 30) {
     return result;
   }
 
-  // Fallback: compute from raw tables (SQL for efficiency)
+  
   const regsQ = prisma.$queryRaw`
     SELECT date_trunc('day',"created_at")::date AS d, COUNT(*)::int AS c
     FROM "users"
@@ -198,11 +198,11 @@ export async function getDaily(days = 30) {
   return result;
 }
 
-// ───────────────────────────────────────────────────────────────
-// GLOBAL TOP COURSES (by attempts), with titles
-// ───────────────────────────────────────────────────────────────
+
+
+
 export async function getTopCourses(limit = 10) {
-  // group attempts by testId
+  
   const grouped = await prisma.testAttempt.groupBy({
     by: ["testId"],
     _count: { testId: true },
@@ -228,9 +228,9 @@ export async function getTopCourses(limit = 10) {
   }));
 }
 
-// ───────────────────────────────────────────────────────────────
-// GLOBAL RECENT EVENTS (admin feed style)
-// ───────────────────────────────────────────────────────────────
+
+
+
 export async function getRecent(limit = 50, page = 1) {
   const take = Math.max(1, Math.min(Number(limit) || 50, 200));
   const skip = (Math.max(1, Number(page) || 1) - 1) * take;
@@ -256,14 +256,14 @@ export async function getRecent(limit = 50, page = 1) {
   };
 }
 
-// ───────────────────────────────────────────────────────────────
-// GLOBAL USER METRICS LIST (paginated dashboard table)
-// ───────────────────────────────────────────────────────────────
+
+
+
 export async function getUserMetrics({ page = 1, limit = 50 } = {}) {
   const take = Math.max(1, Math.min(Number(limit) || 50, 200));
   const skip = (Math.max(1, Number(page) || 1) - 1) * take;
 
-  // pull users page
+  
   const users = await prisma.user.findMany({
     orderBy: { createdAt: "desc" },
     take,
@@ -273,7 +273,7 @@ export async function getUserMetrics({ page = 1, limit = 50 } = {}) {
   const userIds = users.map((u) => u.id);
   if (userIds.length === 0) return { items: [], page: Number(page) || 1, limit: take };
 
-  // aggregate attempts per user
+  
   const attemptsAgg = await prisma.testAttempt.groupBy({
     by: ["userId"],
     where: { userId: { in: userIds } },
@@ -298,14 +298,14 @@ export async function getUserMetrics({ page = 1, limit = 50 } = {}) {
   return { items, page: Number(page) || 1, limit: take };
 }
 
-// ───────────────────────────────────────────────────────────────
-// GLOBAL TEST RESULTS SUMMARY (attempts / avg_score / pass_rate)
-// ───────────────────────────────────────────────────────────────
+
+
+
 export async function getTestResults(testId, { from = null, to = null } = {}) {
   const tid = Number(testId);
   if (!tid) return { attempts: 0, avg_score: 0, pass_rate: 0 };
 
-  // Date bounds for raw SQL
+  
   const rows = await prisma.$queryRaw`
     SELECT
       COUNT(*)::int AS attempts,
@@ -327,9 +327,9 @@ export async function getTestResults(testId, { from = null, to = null } = {}) {
   };
 }
 
-// ───────────────────────────────────────────────────────────────
-// PER-USER OVERVIEW (matches your previous userOverview logic)
-// ───────────────────────────────────────────────────────────────
+
+
+
 export async function getUserOverview(userId) {
   const uid = Number(userId);
 
@@ -338,7 +338,7 @@ export async function getUserOverview(userId) {
       by: ["userId", "testId"],
       where: { userId: uid },
       _count: { testId: true },
-    }).then((rows) => rows.length), // distinct tests interacted
+    }).then((rows) => rows.length), 
     prisma.testAttempt.count({ where: { userId: uid } }),
     prisma.testAttempt.aggregate({ where: { userId: uid, score: { not: null } }, _avg: { score: true } }),
     prisma.certificate.count({ where: { userId: uid } }),
@@ -371,9 +371,9 @@ export async function getUserOverview(userId) {
   };
 }
 
-// ───────────────────────────────────────────────────────────────
-// PER-USER DAILY ACTIVITY (attempts + certificates union)
-// ───────────────────────────────────────────────────────────────
+
+
+
 export async function getUserDaily(userId, days = 30) {
   const uid = Number(userId);
 
@@ -409,9 +409,9 @@ export async function getUserDaily(userId, days = 30) {
   return { activity, tests };
 }
 
-// ───────────────────────────────────────────────────────────────
-// PER-USER TOP COURSES (by attempts), with titles
-// ───────────────────────────────────────────────────────────────
+
+
+
 export async function getUserTopCourses(userId, limit = 10) {
   const uid = Number(userId);
   const grouped = await prisma.testAttempt.groupBy({
@@ -439,15 +439,15 @@ export async function getUserTopCourses(userId, limit = 10) {
   }));
 }
 
-// ───────────────────────────────────────────────────────────────
-// PER-USER RECENT (combine attempts + certificates + events)
-// ───────────────────────────────────────────────────────────────
+
+
+
 export async function getUserRecent(userId, limit = 50, page = 1) {
   const uid = Number(userId);
   const take = Math.max(1, Math.min(Number(limit) || 50, 200));
   const skip = (Math.max(1, Number(page) || 1) - 1) * take;
 
-  // Use raw union for performance and correct ordering
+  
   const rows = await prisma.$queryRaw`
     SELECT created_at, type, description FROM (
       SELECT "created_at", 'test_attempt'::text AS type,

@@ -5,9 +5,7 @@ import { sendSMS } from "../services/twilioService.js";
 
 const router = express.Router();
 
-/* ────────────────────────────────────────────────────────────────
-   🔧 Хелпер: нормалізація телефонів (універсально, UA-friendly)
-   ──────────────────────────────────────────────────────────────── */
+
 function normalizePhone(phone) {
     if (!phone) return null;
     const digits = phone.replace(/[^0-9]/g, "");
@@ -19,9 +17,7 @@ function normalizePhone(phone) {
             : `+${digits}`;
 }
 
-/* ────────────────────────────────────────────────────────────────
-   ✅ 1. Перевірка, чи користувач підписаний
-   ──────────────────────────────────────────────────────────────── */
+
 router.get("/check", verifyToken, async (req, res) => {
     try {
         const userId = req.user.id;
@@ -30,16 +26,14 @@ router.get("/check", verifyToken, async (req, res) => {
         });
         res.json({ subscribed: Boolean(existing) });
     } catch (err) {
-        console.error("❌ Check SMS subscription error:", err);
+        console.error(" Check SMS subscription error:", err);
         res
             .status(500)
             .json({ success: false, message: "Server error while checking" });
     }
 });
 
-/* ────────────────────────────────────────────────────────────────
-   ✅ 2. Додати користувача в підписку
-   ──────────────────────────────────────────────────────────────── */
+
 router.post("/subscribe", verifyToken, async (req, res) => {
     try {
         const userId = req.user.id;
@@ -51,7 +45,7 @@ router.post("/subscribe", verifyToken, async (req, res) => {
                 .status(400)
                 .json({ success: false, message: "Phone required" });
 
-        // уникаємо дублікатів
+        
         const existing = await prisma.smsSubscription.findFirst({
             where: {
                 OR: [{ userId }, { phone }],
@@ -70,14 +64,12 @@ router.post("/subscribe", verifyToken, async (req, res) => {
 
         res.json({ success: true, message: "Subscription saved" });
     } catch (err) {
-        console.error("❌ Subscribe error:", err);
+        console.error(" Subscribe error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-/* ────────────────────────────────────────────────────────────────
-   📣 3. Адмінська розсилка SMS через Twilio
-   ──────────────────────────────────────────────────────────────── */
+
 router.post("/send-promo", verifyToken, isAdmin, async (req, res) => {
     try {
         const { message } = req.body;
@@ -87,7 +79,7 @@ router.post("/send-promo", verifyToken, isAdmin, async (req, res) => {
                 message: "Повідомлення не може бути порожнім",
             });
 
-        // отримуємо унікальні телефони
+        
         const subs = await prisma.smsSubscription.findMany({
             select: { phone: true },
         });
@@ -110,24 +102,22 @@ router.post("/send-promo", verifyToken, isAdmin, async (req, res) => {
 
         res.json({
             success: true,
-            message: `✅ Розсилка виконана: ${sent}/${uniquePhones.length} повідомлень`,
+            message: ` Розсилка виконана: ${sent}/${uniquePhones.length} повідомлень`,
             failed: failed.length ? failed : undefined,
         });
     } catch (err) {
-        console.error("❌ sendPromo error:", err);
+        console.error(" sendPromo error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-/* ────────────────────────────────────────────────────────────────
-   🔢 4. Підрахунок кількості SMS-підписників
-   ──────────────────────────────────────────────────────────────── */
+
 router.get("/count", verifyToken, isAdmin, async (req, res) => {
     try {
         const count = await prisma.smsSubscription.count();
         res.json({ success: true, count });
     } catch (err) {
-        console.error("❌ Count error:", err);
+        console.error(" Count error:", err);
         res.status(500).json({ success: false, count: 0 });
     }
 });

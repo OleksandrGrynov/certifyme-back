@@ -1,13 +1,13 @@
-// controllers/paymentController.js
+
 import Stripe from "stripe";
 import prisma from "../config/prisma.js";
 import { triggerAchievementsCheck } from "../utils/achievementEngine.js";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ======================================================
-// 💳 Створення Stripe Checkout сесії
-// ======================================================
+
+
+
 export const createCheckoutSession = async (req, res) => {
     try {
         const { testId } = req.body;
@@ -18,7 +18,7 @@ export const createCheckoutSession = async (req, res) => {
 
         const userId = req.user.id;
 
-        // 🔍 Отримуємо дані тесту
+        
         const test = await prisma.test.findUnique({
             where: { id: Number(testId) },
             select: {
@@ -37,7 +37,7 @@ export const createCheckoutSession = async (req, res) => {
                 ? test.priceCents
                 : 100;
 
-        // 🧾 Створюємо запис у таблиці payments
+        
         const payment = await prisma.payment.create({
             data: {
                 userId,
@@ -56,7 +56,7 @@ export const createCheckoutSession = async (req, res) => {
             amount,
         });
 
-        // 🪙 Створюємо Stripe Checkout Session
+        
         const session = await stripe.checkout.sessions.create({
             mode: "payment",
             payment_method_types: ["card"],
@@ -73,12 +73,12 @@ export const createCheckoutSession = async (req, res) => {
                 },
             ],
             metadata: { userId, testId: test.id, paymentId: payment.id },
-            // На проді доступ відкриває webhook; success_url — просто для UX
+            
             success_url: `${process.env.FRONTEND_URL}/tests?paid=true&testId=${testId}`,
             cancel_url: `${process.env.FRONTEND_URL}/tests?paid=false`,
         });
 
-        // 🆔 Зберігаємо ID Stripe-сесії
+        
         await prisma.payment.update({
             where: { id: payment.id },
             data: { stripeSessionId: session.id },
@@ -86,14 +86,14 @@ export const createCheckoutSession = async (req, res) => {
 
         res.json({ url: session.url });
     } catch (err) {
-        console.error("❌ createCheckoutSession error:", err);
+        console.error(" createCheckoutSession error:", err);
         res.status(500).json({ message: "Server error" });
     }
 };
 
-// ======================================================
-// 🧠 Локальний режим — підтвердження без webhook (DEV)
-// ======================================================
+
+
+
 export const confirmLocalPayment = async (req, res) => {
     try {
         const userId = req.user?.id;
@@ -135,7 +135,7 @@ export const confirmLocalPayment = async (req, res) => {
             console.log(`⚡ Payment ${lastPayment.id} already succeeded`);
         }
 
-        // 🟢 Розблокувати тест
+        
         await prisma.userTest.upsert({
             where: {
                 userId_testId: { userId: numericUserId, testId: numericTestId },
@@ -151,33 +151,33 @@ export const confirmLocalPayment = async (req, res) => {
 
         console.log(`🚀 Test ${testId} unlocked for user ${userId}`);
 
-        // 🏆 Досягнення
+        
         const unlockedAchievements = await triggerAchievementsCheck(numericUserId);
 
         res.json({
             success: true,
-            message: "✅ Payment confirmed, test unlocked, achievements checked",
+            message: " Payment confirmed, test unlocked, achievements checked",
             unlocked: unlockedAchievements,
         });
     } catch (err) {
-        console.error("❌ confirmLocalPayment error:", err);
+        console.error(" confirmLocalPayment error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
-// ======================================================
-// 📨 Stripe Webhook — ПРОДАКШЕН (Render/Vercel)
-// ======================================================
+
+
+
 export const stripeWebhook = async (req, res) => {
     const sig = req.headers["stripe-signature"];
     const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
     let event;
     try {
-        // ВАЖЛИВО: тут req.body — Buffer, бо маршрут оголошено з express.raw
+        
         event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
     } catch (err) {
-        console.error("❌ Webhook signature verification failed:", err.message);
+        console.error(" Webhook signature verification failed:", err.message);
         return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
@@ -190,15 +190,15 @@ export const stripeWebhook = async (req, res) => {
                 const testId = Number(session.metadata.testId);
                 const paymentId = Number(session.metadata.paymentId);
 
-                console.log("✅ Webhook received for", { userId, testId, paymentId });
+                console.log(" Webhook received for", { userId, testId, paymentId });
 
-                // 1️⃣ Оновити статус платежу
+                
                 await prisma.payment.update({
                     where: { id: paymentId },
                     data: { status: "succeeded", updatedAt: new Date() },
                 });
 
-                // 2️⃣ Розблокувати тест
+                
                 await prisma.userTest.upsert({
                     where: { userId_testId: { userId, testId } },
                     update: { isUnlocked: true, grantedAt: new Date() },
@@ -207,7 +207,7 @@ export const stripeWebhook = async (req, res) => {
 
                 console.log(`🚀 Test ${testId} unlocked for user ${userId}`);
 
-                // 3️⃣ Перевірка досягнень
+                
                 const unlocked = await triggerAchievementsCheck(userId);
                 if (unlocked.length > 0)
                     console.log(

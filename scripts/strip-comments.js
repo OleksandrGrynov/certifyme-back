@@ -1,4 +1,4 @@
-/* Strips all comments from .js files (excluding node_modules) using Babel parser/generator. */
+
 const fs = require('fs');
 const path = require('path');
 const fg = require('fast-glob');

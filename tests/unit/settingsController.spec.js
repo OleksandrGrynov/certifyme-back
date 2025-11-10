@@ -14,7 +14,7 @@ await jest.unstable_mockModule('../../config/prisma.js', () => ({
 
 const controller = await import('../../controllers/settingsController.js').catch(() => ({}));
 
-// Only run if controller exists in project
+
 if (!controller.getSettings && !controller.updateSettings) {
   test('skip settingsController (controller missing)', () => {
     expect(true).toBe(true);

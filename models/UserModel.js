@@ -1,9 +1,7 @@
 import prisma from "../config/prisma.js";
 
 const UserModel = {
-    /**
-     * 🔹 Отримати користувача за ID
-     */
+    
     async getById(id) {
         const user = await prisma.user.findUnique({
             where: { id: Number(id) },
@@ -19,9 +17,7 @@ const UserModel = {
         return user;
     },
 
-    /**
-     * 🔹 Оновити профіль користувача
-     */
+    
     async updateProfile(id, first_name, last_name, email) {
         const updated = await prisma.user.update({
             where: { id: Number(id) },
@@ -42,9 +38,7 @@ const UserModel = {
         return updated;
     },
 
-    /**
-     * 🔹 Оновити пароль
-     */
+    
     async updatePassword(id, newPassword) {
         await prisma.user.update({
             where: { id: Number(id) },

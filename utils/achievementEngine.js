@@ -1,10 +1,7 @@
 import prisma from "../config/prisma.js";
 import { updateAchievementsBatch } from "../models/AchievementModel.js";
 
-/**
- * 🧠 Перевіряє всі умови досягнень і розблоковує ті, що користувач виконав
- * Викликається після подій: тест, сертифікат, оплата тощо
- */
+
 export async function checkAchievements(userStats) {
     const {
         id: userId,
@@ -17,7 +14,7 @@ export async function checkAchievements(userStats) {
     } = userStats;
 
     try {
-        // 🔹 1. Отримуємо всі досягнення та вже отримані користувачем
+        
         const [achievements, userAchievements] = await Promise.all([
             prisma.achievement.findMany(),
             prisma.userAchievement.findMany({
@@ -56,7 +53,7 @@ export async function checkAchievements(userStats) {
                     break;
             }
 
-            // 🔒 2. Якщо виконано, але ще не було отримано
+            
             if (achieved && !alreadyUnlockedIds.has(a.id)) {
                 unlocked.push({
                     achievementId: a.id,
@@ -66,7 +63,7 @@ export async function checkAchievements(userStats) {
             }
         }
 
-        // 🔄 3. Записуємо тільки нові досягнення
+        
         if (unlocked.length) {
             for (const a of unlocked) {
                 await prisma.userAchievement.upsert({
@@ -83,9 +80,9 @@ export async function checkAchievements(userStats) {
             }
         }
 
-        return unlocked; // тільки нові
+        return unlocked; 
     } catch (err) {
-        console.error("❌ checkAchievements error:", err);
+        console.error(" checkAchievements error:", err);
         return [];
     }
 }
@@ -94,7 +91,7 @@ export async function checkAchievements(userStats) {
 export async function triggerAchievementsCheck(userId) {
     try {
         const [testsPassed, certificates, payments, avgScoreObj] = await Promise.all([
-            // ✅ тільки пройдені тести
+            
             prisma.userTestHistory.count({ where: { userId, passed: true } }),
 
             prisma.certificate.count({ where: { userId } }),
@@ -124,7 +121,7 @@ export async function triggerAchievementsCheck(userId) {
 
         return await checkAchievements(userStats);
     } catch (err) {
-        console.error("❌ triggerAchievementsCheck error:", err);
+        console.error(" triggerAchievementsCheck error:", err);
         return [];
     }
 }
