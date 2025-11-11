@@ -27,10 +27,11 @@ router.get("/verify/:id", async (req, res) => {
             certId: cert.certId,
             userName: cert.userName,
             course: cert.course,
-            score: cert.percent,
-            issued: cert.issued,
-            expires: cert.expires,
+            percent: cert.percent,
+            issued: new Date(cert.issued).toISOString(),
+            expires: new Date(cert.expires).toISOString(),
         });
+
 
         // ✅ перевірка підпису
         const isValid = verify(

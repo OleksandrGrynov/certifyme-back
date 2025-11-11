@@ -32,14 +32,14 @@ export async function generateCertificatePDF(certId) {
     const expiresAt = new Date(cert.expires).toLocaleDateString("uk-UA");
     const certCode = cert.certId;
 
-    // === 1. Формуємо дані для підпису ===
     const data = JSON.stringify({
         certId: certCode,
         userName,
-        testTitle,
-        score,
-        issued: cert.issued,
-        expires: cert.expires,
+        course: testTitle,
+        percent: score,
+        issued: cert.issued.toISOString(),
+
+        expires: cert.expires.toISOString(),
     });
 
     // === 2. Підписуємо дані приватним ключем ===
