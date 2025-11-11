@@ -2,10 +2,13 @@ import fs from "fs";
 import path from "path";
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
+import crypto from "crypto";
 import prisma from "../config/prisma.js";
 
 const FONT_PATH = path.join(process.cwd(), "fonts", "OpenSans-Regular.ttf");
 const FONT_BOLD = path.join(process.cwd(), "fonts", "OpenSans-Bold.ttf");
+
+const PRIVATE_KEY_PATH = path.join(process.cwd(), "keys", "private.pem");
 
 export async function generateCertificatePDF(certId) {
     const certFolder = path.resolve("certificates");
@@ -20,7 +23,7 @@ export async function generateCertificatePDF(certId) {
         },
     });
 
-    if (!cert) throw new Error(" Certificate not found in DB");
+    if (!cert) throw new Error("Certificate not found in DB");
 
     const userName = `${cert.user?.firstName || ""} ${cert.user?.lastName || ""}`.trim();
     const testTitle = cert.test?.titleUa || cert.test?.titleEn || "-";
@@ -29,7 +32,27 @@ export async function generateCertificatePDF(certId) {
     const expiresAt = new Date(cert.expires).toLocaleDateString("uk-UA");
     const certCode = cert.certId;
 
-    
+    // === 1. Формуємо дані для підпису ===
+    const data = JSON.stringify({
+        certId: certCode,
+        userName,
+        testTitle,
+        score,
+        issued: cert.issued,
+        expires: cert.expires,
+    });
+
+    // === 2. Підписуємо дані приватним ключем ===
+    const privateKey = fs.readFileSync(PRIVATE_KEY_PATH);
+    const signature = crypto.sign("sha256", Buffer.from(data), privateKey).toString("base64");
+
+    // === 3. Зберігаємо підпис у БД ===
+    await prisma.certificate.update({
+        where: { certId: certCode },
+        data: { signature },
+    });
+
+    // === 4. Генеруємо QR для перевірки ===
     const verifyUrl = `https://certifyme.me/verify/${certCode}`;
     const qrPath = path.join(certFolder, `qr_${certCode}.png`);
     await QRCode.toFile(qrPath, verifyUrl, {
@@ -37,7 +60,7 @@ export async function generateCertificatePDF(certId) {
         color: { dark: "#00703C", light: "#FFFFFF" },
     });
 
-    
+    // === 5. Створюємо PDF без підпису ===
     const doc = new PDFDocument({
         size: "A4",
         margin: 60,
@@ -48,20 +71,17 @@ export async function generateCertificatePDF(certId) {
     if (fs.existsSync(FONT_PATH)) doc.registerFont("OpenSans", FONT_PATH);
     if (fs.existsSync(FONT_BOLD)) doc.registerFont("OpenSans-Bold", FONT_BOLD);
 
-    
+    // межа, логотип, тексти і т.д. (без змін)
     doc.rect(20, 20, doc.page.width - 40, doc.page.height - 40)
         .strokeColor("#16a34a").lineWidth(3).stroke();
 
-    
-    doc.font("OpenSans-Bold").fontSize(28).fillColor("#16a34a")
-        .text("CERTIFYME", { align: "center" });
+    doc.font("OpenSans-Bold").fontSize(28).fillColor("#16a34a").text("CERTIFYME", { align: "center" });
     doc.moveDown(0.3);
     doc.font("OpenSans").fontSize(16).fillColor("#000")
         .text("СЕРТИФІКАТ ДОСЯГНЕНЬ / CERTIFICATE OF COMPLETION", { align: "center" });
 
-    
     const leftX = 80;
-    const rightX = 390; 
+    const rightX = 390;
     let y = 180;
 
     doc.fontSize(14).fillColor("#333").text("Видано / Awarded to:", leftX, y);
@@ -80,38 +100,13 @@ export async function generateCertificatePDF(certId) {
         .text(`Дата видачі / Issued: ${issuedAt}`, leftX, y)
         .text(`Дійсний до / Valid until: ${expiresAt}`, leftX, y + 15);
 
-    
     if (fs.existsSync(qrPath)) doc.image(qrPath, rightX, 240, { width: 110 });
     doc.fontSize(10).fillColor("#555").text(`ID: ${certCode}`, rightX + 10, 365);
     doc.fontSize(9).fillColor("#888").text("CertifyMe © 2025 | certifyme.me", rightX, 380);
 
-    
-    const assetsDir = path.join(process.cwd(), "assets");
-    const signPath = path.join(assetsDir, "signature.png");
-    const stampPath = path.join(assetsDir, "stamp.png");
-    const logoPath = path.join(assetsDir, "logo.png");
-    const baseY = 660;
-
-    
-    if (fs.existsSync(signPath)) doc.image(signPath, leftX + 10, baseY - 15, { width: 90 });
-    doc.font("OpenSans").fontSize(12).fillColor("#333")
-        .text("_________________________", leftX, baseY + 50)
-        .text("CEO, CertifyMe Platform", leftX + 10, baseY + 65);
-
-    
-    if (fs.existsSync(stampPath)) doc.image(stampPath, rightX + 20, baseY - 30, { width: 100 });
-    doc.fontSize(11).fillColor("#333").text("Печатка / Stamp", rightX + 35, baseY + 65);
-
-    
-    if (fs.existsSync(logoPath)) {
-        
-        doc.image(logoPath, doc.page.width / 2 - 25, doc.page.height - 130, { width: 50 });
-    }
-
-
     doc.end();
     await new Promise((r) => setTimeout(r, 200));
 
-    console.log(` Elegant and aligned certificate created: ${certFile}`);
+    console.log(`✅ Signed certificate generated (signature saved in DB): ${certFile}`);
     return certFile;
 }

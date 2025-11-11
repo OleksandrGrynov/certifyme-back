@@ -6,7 +6,45 @@ import { generateCertificatePDF } from "../utils/certificateGenerator.js";
 
 const router = express.Router();
 
+router.get("/verify/:id", async (req, res) => {
+    try {
+        const { id } = req.params;
+        const cert = await prisma.certificate.findUnique({ where: { certId: id } });
+        if (!cert) return res.status(404).json({ success: false, message: "Not found" });
 
+        const publicKey = fs.readFileSync("keys/public.pem");
+        const data = JSON.stringify({
+            certId: cert.certId,
+            userName: cert.userName,
+            course: cert.course,
+            score: cert.percent,
+            issued: cert.issued,
+            expires: cert.expires,
+        });
+
+        const isValid = crypto.verify(
+            "sha256",
+            Buffer.from(data),
+            publicKey,
+            Buffer.from(cert.signature, "base64")
+        );
+
+        res.json({
+            success: true,
+            valid: isValid,
+            certId: cert.certId,
+            name: cert.userName,
+            course: cert.course,
+            issued: new Date(cert.issued).toLocaleDateString("uk-UA"),
+            expires: new Date(cert.expires).toLocaleDateString("uk-UA"),
+            percent: cert.percent,
+            status: isValid ? "✅ Сертифікат справжній" : "❌ Сертифікат змінено або недійсний",
+        });
+    } catch (err) {
+        console.error("Verification error:", err);
+        res.status(500).json({ success: false, message: "Verification failed" });
+    }
+});
 router.get("/:filename", async (req, res) => {
     try {
         const filename = req.params.filename;

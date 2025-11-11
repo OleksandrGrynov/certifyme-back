@@ -95,6 +95,8 @@ model Certificate {
   percent   Int
   test      Test?    @relation(fields: [testId], references: [id])
   user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  signature String?  @map("signature")
+
   createdAt DateTime @default(now()) @map("created_at")
   @@index([issued], map: "idx_certificates_issued")
   @@index([userId], map: "idx_certificates_user_id")
